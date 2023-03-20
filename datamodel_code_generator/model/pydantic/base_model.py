@@ -230,6 +230,8 @@ class BaseModel(DataModel):
                 else 'Extra.forbid'
             )
             self._additional_imports.append(IMPORT_EXTRA)
+        else:
+            config_parameters['extra'] = 'Extra.forbid'
 
         for config_attribute in 'allow_population_by_field_name', 'allow_mutation':
             if config_attribute in self.extra_template_data:
