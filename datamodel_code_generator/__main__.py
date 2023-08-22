@@ -6,9 +6,11 @@ Main function.
 
 from __future__ import annotations
 
-import locale
-# Windows locale default is not UTF-8 (welcome to the stone age)
-locale.setlocale( locale.LC_ALL, 'en_US.UTF-8' )
+import platform
+if platform.system() == "Windows":
+    import locale
+    # Windows locale default is not UTF-8 (welcome to the stone age)
+    locale.setlocale( locale.LC_ALL, 'en_US.UTF-8' )
 
 import json
 import locale
