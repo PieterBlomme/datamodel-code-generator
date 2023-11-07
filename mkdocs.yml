@@ -18,11 +18,13 @@ site_url: https://koxudaxi.github.io/datamodel-code-generator
 
 nav:
     - Overview: index.md
-    - Support data types: support-data-types.md
+    - Support data types: supported-data-types.md
     - Usage:
+      - What is the difference between pydantic v1 and v2 output model: what_is_the_difference_between_v1_and_v2.md
       - Generate from OpenAPI: openapi.md
       - Generate from JSON Schema: jsonschema.md
       - Generate from JSON Data: jsondata.md
+      - Custom template: custom_template.md
       - Using as module: using_as_module.md
       - Formatting: formatting.md
       - Field Constraints: field-constraints.md

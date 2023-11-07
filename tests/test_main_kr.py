@@ -1,11 +1,12 @@
 import shutil
+from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
-from _pytest.capture import CaptureFixture
 from freezegun import freeze_time
 
+from datamodel_code_generator import inferred_message
 from datamodel_code_generator.__main__ import Exit, main
 
 try:
@@ -13,12 +14,22 @@ try:
 except ImportError:
     from _pytest.tmpdir import TempdirFactory
 
+CaptureFixture = pytest.CaptureFixture
+MonkeyPatch = pytest.MonkeyPatch
+
 DATA_PATH: Path = Path(__file__).parent / 'data'
 OPEN_API_DATA_PATH: Path = DATA_PATH / 'openapi'
 EXPECTED_MAIN_KR_PATH = DATA_PATH / 'expected' / 'main_kr'
 
 
 TIMESTAMP = '1985-10-26T01:21:00-07:00'
+
+
+@pytest.fixture(autouse=True)
+def reset_namespace(monkeypatch: MonkeyPatch):
+    namespace_ = Namespace(no_color=False)
+    monkeypatch.setattr('datamodel_code_generator.__main__.namespace', namespace_)
+    monkeypatch.setattr('datamodel_code_generator.arguments.namespace', namespace_)
 
 
 @freeze_time('2019-07-26')
@@ -38,9 +49,6 @@ def test_main():
             output_file.read_text()
             == (EXPECTED_MAIN_KR_PATH / 'main' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -64,9 +72,6 @@ def test_main_base_class():
             == (EXPECTED_MAIN_KR_PATH / 'main_base_class' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_target_python_version():
@@ -89,9 +94,6 @@ def test_target_python_version():
                 EXPECTED_MAIN_KR_PATH / 'target_python_version' / 'output.py'
             ).read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 def test_main_modular(tmpdir_factory: TempdirFactory) -> None:
@@ -146,7 +148,7 @@ def test_main_no_file(capsys: CaptureFixture) -> None:
         == (EXPECTED_MAIN_KR_PATH / 'main_no_file' / 'output.py').read_text()
     )
 
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
 def test_main_custom_template_dir(capsys: CaptureFixture) -> None:
@@ -175,7 +177,7 @@ def test_main_custom_template_dir(capsys: CaptureFixture) -> None:
             EXPECTED_MAIN_KR_PATH / 'main_custom_template_dir' / 'output.py'
         ).read_text()
     )
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
 @freeze_time('2019-07-26')
@@ -199,9 +201,6 @@ def test_pyproject():
             == (EXPECTED_MAIN_KR_PATH / 'pyproject' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_use_schema_description():
@@ -224,9 +223,6 @@ def test_main_use_schema_description():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2022-11-11')
 def test_main_use_field_description():
@@ -247,6 +243,3 @@ def test_main_use_field_description():
             EXPECTED_MAIN_KR_PATH / 'main_use_field_description' / 'output.py'
         ).read_text()
         assert generated == expected
-
-    with pytest.raises(SystemExit):
-        main()

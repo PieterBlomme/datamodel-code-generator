@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from functools import lru_cache
@@ -21,25 +19,44 @@ from typing import (
 from warnings import warn
 
 from jinja2 import Environment, FileSystemLoader, Template
+from pydantic import Field
 
-from datamodel_code_generator import cached_property
-from datamodel_code_generator.imports import IMPORT_ANNOTATED, IMPORT_OPTIONAL, Import
+from datamodel_code_generator.imports import (
+    IMPORT_ANNOTATED,
+    IMPORT_ANNOTATED_BACKPORT,
+    IMPORT_OPTIONAL,
+    IMPORT_UNION,
+    Import,
+)
 from datamodel_code_generator.reference import Reference, _BaseModel
-from datamodel_code_generator.types import DataType, Nullable, chain_as_tuple
+from datamodel_code_generator.types import (
+    ANY,
+    NONE,
+    UNION_PREFIX,
+    DataType,
+    Nullable,
+    chain_as_tuple,
+    get_optional_type,
+)
+from datamodel_code_generator.util import PYDANTIC_V2, ConfigDict, cached_property
 
 TEMPLATE_DIR: Path = Path(__file__).parents[0] / 'template'
-
-OPTIONAL: str = 'Optional'
 
 ALL_MODEL: str = '#all#'
 
 
 class ConstraintsBase(_BaseModel):
+    unique_items: Optional[bool] = Field(None, alias='uniqueItems')
     _exclude_fields: ClassVar[Set[str]] = {'has_constraints'}
+    if PYDANTIC_V2:
+        model_config = ConfigDict(
+            arbitrary_types_allowed=True, ignored_types=(cached_property,)
+        )
+    else:
 
-    class Config:
-        arbitrary_types_allowed = True
-        keep_untouched = (cached_property,)
+        class Config:
+            arbitrary_types_allowed = True
+            keep_untouched = (cached_property,)
 
     @cached_property
     def has_constraints(self) -> bool:
@@ -47,10 +64,10 @@ class ConstraintsBase(_BaseModel):
 
 
 class DataModelFieldBase(_BaseModel):
-    name: Optional[str]
-    default: Optional[Any]
+    name: Optional[str] = None
+    default: Optional[Any] = None
     required: bool = False
-    alias: Optional[str]
+    alias: Optional[str] = None
     data_type: DataType
     constraints: Any = None
     strip_default_none: bool = False
@@ -63,54 +80,76 @@ class DataModelFieldBase(_BaseModel):
     const: bool = False
     original_name: Optional[str] = None
     use_default_kwarg: bool = False
+    use_one_literal_as_default: bool = False
     _exclude_fields: ClassVar[Set[str]] = {'parent'}
     _pass_fields: ClassVar[Set[str]] = {'parent', 'data_type'}
 
     if not TYPE_CHECKING:
 
-        def __init__(self, **data: Any):
+        def __init__(self, **data: Any) -> None:
             super().__init__(**data)
             if self.data_type.reference or self.data_type.data_types:
                 self.data_type.parent = self
-            if 'const' in self.extras:
-                self.default = self.extras['const']
-                self.const = True
-                self.required = False
-                self.nullable = False
+            self.process_const()
+
+    def process_const(self) -> None:
+        if 'const' not in self.extras:
+            return None
+        self.default = self.extras['const']
+        self.const = True
+        self.required = False
+        self.nullable = False
 
     @property
     def type_hint(self) -> str:
         type_hint = self.data_type.type_hint
 
         if not type_hint:
-            return OPTIONAL
-        elif self.data_type.is_optional and self.data_type.type != 'Any':
+            return NONE
+        elif self.has_default_factory:
+            return type_hint
+        elif self.data_type.is_optional and self.data_type.type != ANY:
             return type_hint
         elif self.nullable is not None:
             if self.nullable:
-                if self.data_type.use_union_operator:
-                    return f'{type_hint} | None'
-                else:
-                    return f'{OPTIONAL}[{type_hint}]'
+                return get_optional_type(type_hint, self.data_type.use_union_operator)
             return type_hint
         elif self.required:
             return type_hint
-        if self.data_type.use_union_operator:
-            return f'{type_hint} | None'
+        elif self.fall_back_to_nullable:
+            return get_optional_type(type_hint, self.data_type.use_union_operator)
         else:
-            return f'{OPTIONAL}[{type_hint}]'
+            return type_hint
 
     @property
     def imports(self) -> Tuple[Import, ...]:
+        type_hint = self.type_hint
+        has_union = not self.data_type.use_union_operator and UNION_PREFIX in type_hint
         imports: List[Union[Tuple[Import], Iterator[Import]]] = [
-            self.data_type.all_imports
+            (
+                i
+                for i in self.data_type.all_imports
+                if not (not has_union and i == IMPORT_UNION)
+            )
         ]
-        if (
-            self.nullable or (self.nullable is None and not self.required)
-        ) and not self.data_type.use_union_operator:
-            imports.append((IMPORT_OPTIONAL,))
-        if self.use_annotated:
-            imports.append((IMPORT_ANNOTATED,))
+
+        if self.fall_back_to_nullable:
+            if (
+                self.nullable or (self.nullable is None and not self.required)
+            ) and not self.data_type.use_union_operator:
+                imports.append((IMPORT_OPTIONAL,))
+        else:
+            if (
+                self.nullable and not self.data_type.use_union_operator
+            ):  # pragma: no cover
+                imports.append((IMPORT_OPTIONAL,))
+        if self.use_annotated and self.annotated:
+            import_annotated = (
+                IMPORT_ANNOTATED
+                if self.data_type.python_version.has_annotated_type
+                else IMPORT_ANNOTATED_BACKPORT
+            )
+            imports.append((import_annotated,))
         return chain_as_tuple(*imports)
 
     @property
@@ -141,6 +180,14 @@ class DataModelFieldBase(_BaseModel):
     @property
     def annotated(self) -> Optional[str]:
         return None
+
+    @property
+    def has_default_factory(self) -> bool:
+        return 'default_factory' in self.extras
+
+    @property
+    def fall_back_to_nullable(self) -> bool:
+        return True
 
 
 @lru_cache()

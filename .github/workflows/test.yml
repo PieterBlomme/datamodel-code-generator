@@ -10,11 +10,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
         os: [ubuntu-latest, windows-latest, macos-latest]
         isort-version: [4.3.21, 5.6.4]
         black-version: [22.1.0, default]
-        pydantic-version: [1.5.1, default]
+        pydantic-version: [1.5.1, 1.10.9, 2.4.2]
+        include:
+          - os: ubuntu-latest
+            isort-version: 5.6.4
+            black-version: default
+            python-version: 3.8
+            pydantic-version: 1.8.2
         exclude:
           - os: windows-latest
             black-version: 22.1.0
@@ -34,6 +40,8 @@ jobs:
             pydantic-version: 1.5.1
           - python-version: 3.11
             pydantic-version: 1.5.1
+          - python-version: 3.12
+            pydantic-version: 1.5.1
     defaults:
       run:
         shell: bash
@@ -44,13 +52,13 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install Poetry
       uses: snok/install-poetry@v1
       with:
-        version: 1.2.2
+        version: 1.4.2
         virtualenvs-path: .venv
         virtualenvs-create: true
         virtualenvs-in-project: true
@@ -61,7 +69,7 @@ jobs:
       if: matrix.os != 'windows-latest'
       with:
         path: .venv
-        key: venv-${{ runner.os }}-${{ matrix.python-version }}-v1-${{ hashFiles('**/poetry.lock') }}
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.pydantic-version }}-v1-${{ hashFiles('**/poetry.lock') }}
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install --no-interaction -E http
@@ -69,15 +77,16 @@ jobs:
       if: runner.os != 'Windows'
       run: |
          poetry run pip install isort=="$ISORT"
-    - name: Install Pydantic 1.5.1
-      if: matrix.pydantic-version == '1.5.1'
+    - name: Install Pydantic ${{ matrix.pydantic-version }}
+      if: matrix.pydantic-version != 'default'
       run: |
-         poetry run pip install pydantic=="1.5.1"
+        poetry run pip install pydantic=="${{ matrix.pydantic-version }}"
     - name: Install Black 22.1.0
       if: matrix.black-version == '22.1.0'
       run: |
          poetry run pip install black=="22.1.0"
     - name: Lint
+      if: matrix.pydantic-version == 'default'
       run: |
         source $VENV
         ./scripts/lint.sh
@@ -86,8 +95,8 @@ jobs:
          source $VENV
          ./scripts/test.sh
     - name: Upload coverage to Codecov
-      if: matrix.os != 'windows-latest' && matrix.pydantic-version == 'default' 
-      uses: codecov/codecov-action@v2
+      if: matrix.os == 'ubuntu-latest' && matrix.pydantic-version != '1.5.1'
+      uses: codecov/codecov-action@v3
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: unittests

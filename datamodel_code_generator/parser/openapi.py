@@ -24,10 +24,11 @@ from typing import (
 )
 from urllib.parse import ParseResult
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from datamodel_code_generator import (
     DefaultPutDict,
+    Error,
     LiteralType,
     OpenAPIScope,
     PythonVersion,
@@ -36,14 +37,20 @@ from datamodel_code_generator import (
 )
 from datamodel_code_generator.model import DataModel, DataModelFieldBase
 from datamodel_code_generator.model import pydantic as pydantic_model
+from datamodel_code_generator.parser.base import get_special_path
 from datamodel_code_generator.parser.jsonschema import (
     JsonSchemaObject,
     JsonSchemaParser,
     get_model_by_path,
-    get_special_path,
 )
 from datamodel_code_generator.reference import snake_to_upper_camel
-from datamodel_code_generator.types import DataType, DataTypeManager, StrictTypes
+from datamodel_code_generator.types import (
+    DataType,
+    DataTypeManager,
+    EmptyDataType,
+    StrictTypes,
+)
+from datamodel_code_generator.util import BaseModel
 
 RE_APPLICATION_JSON_PATTERN: Pattern[str] = re.compile(r'^application/.*json$')
 
@@ -74,62 +81,62 @@ class ReferenceObject(BaseModel):
 
 
 class ExampleObject(BaseModel):
-    summary: Optional[str]
-    description: Optional[str]
-    value: Any
-    externalValue: Optional[str]
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    value: Any = None
+    externalValue: Optional[str] = None
 
 
 class MediaObject(BaseModel):
     schema_: Union[ReferenceObject, JsonSchemaObject, None] = Field(
         None, alias='schema'
     )
-    example: Any
-    examples: Union[str, ReferenceObject, ExampleObject, None]
+    example: Any = None
+    examples: Union[str, ReferenceObject, ExampleObject, None] = None
 
 
 class ParameterObject(BaseModel):
-    name: Optional[str]
+    name: Optional[str] = None
     in_: Optional[ParameterLocation] = Field(None, alias='in')
-    description: Optional[str]
+    description: Optional[str] = None
     required: bool = False
     deprecated: bool = False
     schema_: Optional[JsonSchemaObject] = Field(None, alias='schema')
-    example: Any
-    examples: Union[str, ReferenceObject, ExampleObject, None]
+    example: Any = None
+    examples: Union[str, ReferenceObject, ExampleObject, None] = None
     content: Dict[str, MediaObject] = {}
 
 
 class HeaderObject(BaseModel):
-    description: Optional[str]
+    description: Optional[str] = None
     required: bool = False
     deprecated: bool = False
     schema_: Optional[JsonSchemaObject] = Field(None, alias='schema')
-    example: Any
-    examples: Union[str, ReferenceObject, ExampleObject, None]
+    example: Any = None
+    examples: Union[str, ReferenceObject, ExampleObject, None] = None
     content: Dict[str, MediaObject] = {}
 
 
 class RequestBodyObject(BaseModel):
-    description: Optional[str]
+    description: Optional[str] = None
     content: Dict[str, MediaObject] = {}
     required: bool = False
 
 
 class ResponseObject(BaseModel):
-    description: Optional[str]
+    description: Optional[str] = None
     headers: Dict[str, ParameterObject] = {}
-    content: Dict[str, MediaObject] = {}
+    content: Dict[Union[str, int], MediaObject] = {}
 
 
 class Operation(BaseModel):
     tags: List[str] = []
-    summary: Optional[str]
-    description: Optional[str]
-    operationId: Optional[str]
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    operationId: Optional[str] = None
     parameters: List[Union[ReferenceObject, ParameterObject]] = []
-    requestBody: Union[ReferenceObject, RequestBodyObject, None]
-    responses: Dict[str, Union[ReferenceObject, ResponseObject]] = {}
+    requestBody: Union[ReferenceObject, RequestBodyObject, None] = None
+    responses: Dict[Union[str, int], Union[ReferenceObject, ResponseObject]] = {}
     deprecated: bool = False
 
 
@@ -143,7 +150,7 @@ class ComponentsObject(BaseModel):
 
 @snooper_to_methods(max_variable_length=None)
 class OpenAPIParser(JsonSchemaParser):
-    SCHEMA_PATH: ClassVar[str] = '#/components/schemas'
+    SCHEMA_PATHS: ClassVar[List[str]] = ['#/components/schemas']
 
     def __init__(
         self,
@@ -154,6 +161,7 @@ class OpenAPIParser(JsonSchemaParser):
         data_type_manager_type: Type[DataTypeManager] = pydantic_model.DataTypeManager,
         data_model_field_type: Type[DataModelFieldBase] = pydantic_model.DataModelField,
         base_class: Optional[str] = None,
+        additional_imports: Optional[List[str]] = None,
         custom_template_dir: Optional[Path] = None,
         extra_template_data: Optional[DefaultDict[str, Dict[str, Any]]] = None,
         target_python_version: PythonVersion = PythonVersion.PY_37,
@@ -176,6 +184,7 @@ class OpenAPIParser(JsonSchemaParser):
         reuse_model: bool = False,
         encoding: str = 'utf-8',
         enum_field_as_literal: Optional[LiteralType] = None,
+        use_one_literal_as_default: bool = False,
         set_default_enum_member: bool = False,
         use_subclass_enum: bool = False,
         strict_nullable: bool = False,
@@ -192,6 +201,8 @@ class OpenAPIParser(JsonSchemaParser):
         openapi_scopes: Optional[List[OpenAPIScope]] = None,
         wrap_string_literal: Optional[bool] = False,
         use_title_as_name: bool = False,
+        use_operation_id_as_name: bool = False,
+        use_unique_items_as_set: bool = False,
         http_headers: Optional[Sequence[Tuple[str, str]]] = None,
         http_ignore_tls: bool = False,
         use_annotated: bool = False,
@@ -205,6 +216,7 @@ class OpenAPIParser(JsonSchemaParser):
         remove_special_field_name_prefix: bool = False,
         capitalise_enum_members: bool = False,
         keep_model_order: bool = False,
+        known_third_party: Optional[List[str]] = None,
     ):
         super().__init__(
             source=source,
@@ -213,6 +225,7 @@ class OpenAPIParser(JsonSchemaParser):
             data_type_manager_type=data_type_manager_type,
             data_model_field_type=data_model_field_type,
             base_class=base_class,
+            additional_imports=additional_imports,
             custom_template_dir=custom_template_dir,
             extra_template_data=extra_template_data,
             target_python_version=target_python_version,
@@ -235,6 +248,7 @@ class OpenAPIParser(JsonSchemaParser):
             reuse_model=reuse_model,
             encoding=encoding,
             enum_field_as_literal=enum_field_as_literal,
+            use_one_literal_as_default=use_one_literal_as_default,
             set_default_enum_member=set_default_enum_member,
             use_subclass_enum=use_subclass_enum,
             strict_nullable=strict_nullable,
@@ -250,6 +264,8 @@ class OpenAPIParser(JsonSchemaParser):
             field_extra_keys_without_x_prefix=field_extra_keys_without_x_prefix,
             wrap_string_literal=wrap_string_literal,
             use_title_as_name=use_title_as_name,
+            use_operation_id_as_name=use_operation_id_as_name,
+            use_unique_items_as_set=use_unique_items_as_set,
             http_headers=http_headers,
             http_ignore_tls=http_ignore_tls,
             use_annotated=use_annotated,
@@ -263,6 +279,7 @@ class OpenAPIParser(JsonSchemaParser):
             remove_special_field_name_prefix=remove_special_field_name_prefix,
             capitalise_enum_members=capitalise_enum_members,
             keep_model_order=keep_model_order,
+            known_third_party=known_third_party,
         )
         self.open_api_scopes: List[OpenAPIScope] = openapi_scopes or [
             OpenAPIScope.Schemas
@@ -275,6 +292,22 @@ class OpenAPIParser(JsonSchemaParser):
         else:  # pragma: no cover
             ref_body = self.raw_obj
         return get_model_by_path(ref_body, ref_path.split('/')[1:])
+
+    def get_data_type(self, obj: JsonSchemaObject) -> DataType:
+        # OpenAPI doesn't allow `null` in `type` field and list of types
+        # https://swagger.io/docs/specification/data-models/data-types/#null
+        if obj.nullable and self.strict_nullable and isinstance(obj.type, str):
+            obj.type = [obj.type, 'null']
+
+        return super().get_data_type(obj)
+
+    def parse_one_of(
+        self, name: str, obj: JsonSchemaObject, path: List[str]
+    ) -> List[DataType]:
+        data_types = super().parse_one_of(name, obj, path)
+        if obj.nullable and self.strict_nullable:
+            data_types.append(DataType(type='None'))
+        return data_types
 
     def resolve_object(
         self, obj: Union[ReferenceObject, BaseModelT], object_type: Type[BaseModelT]
@@ -291,14 +324,13 @@ class OpenAPIParser(JsonSchemaParser):
         path: List[str],
     ) -> DataType:
         if obj.is_array:
-            data_type: DataType = self.parse_array_fields(
-                name, obj, [*path, name], False
-            ).data_type
-            # TODO: The List model is not created by this method. Some scenarios may necessitate it.
+            data_type = self.parse_array(name, obj, [*path, name])
         elif obj.allOf:  # pragma: no cover
             data_type = self.parse_all_of(name, obj, path)
-        elif obj.oneOf:  # pragma: no cover
+        elif obj.oneOf or obj.anyOf:  # pragma: no cover
             data_type = self.parse_root_type(name, obj, path)
+            if isinstance(data_type, EmptyDataType) and obj.properties:
+                self.parse_object(name, obj, path)
         elif obj.is_object:
             data_type = self.parse_object(name, obj, path)
         elif obj.enum:  # pragma: no cover
@@ -326,10 +358,12 @@ class OpenAPIParser(JsonSchemaParser):
     def parse_responses(
         self,
         name: str,
-        responses: Dict[str, Union[ReferenceObject, ResponseObject]],
+        responses: Dict[Union[str, int], Union[ReferenceObject, ResponseObject]],
         path: List[str],
-    ) -> Dict[str, Dict[str, DataType]]:
-        data_types: DefaultDict[str, Dict[str, DataType]] = defaultdict(dict)
+    ) -> Dict[Union[str, int], Dict[str, DataType]]:
+        data_types: DefaultDict[Union[str, int], Dict[str, DataType]] = defaultdict(
+            dict
+        )
         for status_code, detail in responses.items():
             if isinstance(detail, ReferenceObject):
                 if not detail.ref:  # pragma: no cover
@@ -351,7 +385,7 @@ class OpenAPIParser(JsonSchemaParser):
                     continue
                 if isinstance(object_schema, JsonSchemaObject):
                     data_types[status_code][content_type] = self.parse_schema(
-                        name, object_schema, [*path, status_code, content_type]
+                        name, object_schema, [*path, str(status_code), content_type]
                     )
                 else:
                     data_types[status_code][content_type] = self.get_ref_data_type(
@@ -463,7 +497,11 @@ class OpenAPIParser(JsonSchemaParser):
 
         if OpenAPIScope.Parameters in self.open_api_scopes and fields:
             self.results.append(
-                self.data_model_type(fields=fields, reference=reference)
+                self.data_model_type(
+                    fields=fields,
+                    reference=reference,
+                    custom_base_class=self.base_class,
+                )
             )
 
     def parse_operation(
@@ -473,6 +511,14 @@ class OpenAPIParser(JsonSchemaParser):
     ) -> None:
         operation = Operation.parse_obj(raw_operation)
         path_name, method = path[-2:]
+        if self.use_operation_id_as_name:
+            if not operation.operationId:
+                raise Error(
+                    f'All operations must have an operationId when --use_operation_id_as_name is set.'
+                    f'The following path was missing an operationId: {path_name}'
+                )
+            path_name = operation.operationId
+            method = ''
         self.parse_all_parameters(
             self._get_model_name(path_name, method, suffix='ParametersQuery'),
             operation.parameters,
@@ -502,7 +548,7 @@ class OpenAPIParser(JsonSchemaParser):
             )
 
     def parse_raw(self) -> None:
-        for source in self.iter_source:
+        for source, path_parts in self._get_context_source_path_parts():
             if self.validation:
                 from prance import BaseParser
 
@@ -519,55 +565,49 @@ class OpenAPIParser(JsonSchemaParser):
             security: Optional[List[Dict[str, List[str]]]] = specification.get(
                 'security'
             )
-            if isinstance(self.source, ParseResult):
-                path_parts: List[str] = self.get_url_path_parts(self.source)
-            else:
-                path_parts = list(source.path.parts)
-            with self.model_resolver.current_root_context(path_parts):
-                if OpenAPIScope.Schemas in self.open_api_scopes:
-                    for (
+            if OpenAPIScope.Schemas in self.open_api_scopes:
+                for (
+                    obj_name,
+                    raw_obj,
+                ) in schemas.items():  # type: str, Dict[Any, Any]
+                    self.parse_raw_obj(
                         obj_name,
                         raw_obj,
-                    ) in schemas.items():  # type: str, Dict[Any, Any]
-                        self.parse_raw_obj(
-                            obj_name,
-                            raw_obj,
-                            [*path_parts, '#/components', 'schemas', obj_name],
+                        [*path_parts, '#/components', 'schemas', obj_name],
+                    )
+            if OpenAPIScope.Paths in self.open_api_scopes:
+                paths: Dict[str, Dict[str, Any]] = specification.get('paths', {})
+                parameters: List[Dict[str, Any]] = [
+                    self._get_ref_body(p['$ref']) if '$ref' in p else p
+                    for p in paths.get('parameters', [])
+                    if isinstance(p, dict)
+                ]
+                paths_path = [*path_parts, '#/paths']
+                for path_name, methods in paths.items():
+                    # Resolve path items if applicable
+                    if '$ref' in methods:
+                        methods = self.get_ref_model(methods['$ref'])
+                    paths_parameters = parameters[:]
+                    if 'parameters' in methods:
+                        paths_parameters.extend(methods['parameters'])
+                    relative_path_name = path_name[1:]
+                    if relative_path_name:
+                        path = [*paths_path, relative_path_name]
+                    else:  # pragma: no cover
+                        path = get_special_path('root', paths_path)
+                    for operation_name, raw_operation in methods.items():
+                        if operation_name not in OPERATION_NAMES:
+                            continue
+                        if paths_parameters:
+                            if 'parameters' in raw_operation:  # pragma: no cover
+                                raw_operation['parameters'].extend(paths_parameters)
+                            else:
+                                raw_operation['parameters'] = paths_parameters
+                        if security is not None and 'security' not in raw_operation:
+                            raw_operation['security'] = security
+                        self.parse_operation(
+                            raw_operation,
+                            [*path, operation_name],
                         )
-                if OpenAPIScope.Paths in self.open_api_scopes:
-                    paths: Dict[str, Dict[str, Any]] = specification.get('paths', {})
-                    parameters: List[Dict[str, Any]] = [
-                        self._get_ref_body(p['$ref']) if '$ref' in p else p  # type: ignore
-                        for p in paths.get('parameters', [])
-                        if isinstance(p, dict)
-                    ]
-                    paths_path = [*path_parts, '#/paths']
-                    for path_name, methods in paths.items():
-                        paths_parameters = parameters[:]
-                        if 'parameters' in methods:
-                            paths_parameters.extend(methods['parameters'])
-                        relative_path_name = path_name[1:]
-                        if relative_path_name:
-                            path = [*paths_path, relative_path_name]
-                        else:  # pragma: no cover
-                            path = get_special_path('root', paths_path)
-                        for operation_name, raw_operation in methods.items():
-                            if operation_name not in OPERATION_NAMES:
-                                continue
-                            if paths_parameters:
-                                if 'parameters' in raw_operation:  # pragma: no cover
-                                    raw_operation['parameters'].extend(paths_parameters)
-                                else:
-                                    raw_operation['parameters'] = paths_parameters
-                            if security is not None and 'security' not in raw_operation:
-                                raw_operation['security'] = security
-                            self.parse_operation(
-                                raw_operation,
-                                [*path, operation_name],
-                            )
 
-        if OpenAPIScope.Schemas not in self.open_api_scopes:
-            exclude_path_prefixes: Optional[List[str]] = ['components/schemas/']
-        else:
-            exclude_path_prefixes = None
-        self._resolve_unparsed_json_pointer(exclude_path_prefixes)
+        self._resolve_unparsed_json_pointer()

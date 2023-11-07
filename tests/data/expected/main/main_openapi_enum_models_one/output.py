@@ -76,8 +76,8 @@ class MultipleTypeEnum(Enum):
     int_42 = 42
 
 
-class SingleEnum(Enum):
-    pet = 'pet'
+class SingleEnum(BaseModel):
+    __root__: Literal['pet']
 
 
 class ArrayEnum(BaseModel):
@@ -101,7 +101,9 @@ class NestedVersion(BaseModel):
 
 class NestedNullableEnum(BaseModel):
     nested_version: Optional[NestedVersion] = Field(
-        'RC1', description='nullable enum', example='RC2'
+        default_factory=lambda: NestedVersion.parse_obj('RC1'),
+        description='nullable enum',
+        example='RC2',
     )
 
 

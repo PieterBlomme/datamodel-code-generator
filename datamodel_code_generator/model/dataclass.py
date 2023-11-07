@@ -1,15 +1,20 @@
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, ClassVar, DefaultDict, Dict, List, Optional, Set, Tuple
 
 from datamodel_code_generator.imports import Import
 from datamodel_code_generator.model import DataModel, DataModelFieldBase
 from datamodel_code_generator.model.base import UNDEFINED
-from datamodel_code_generator.model.improts import IMPORT_DATACLASS, IMPORT_FIELD
+from datamodel_code_generator.model.imports import IMPORT_DATACLASS, IMPORT_FIELD
 from datamodel_code_generator.model.pydantic.base_model import Constraints
 from datamodel_code_generator.reference import Reference
 from datamodel_code_generator.types import chain_as_tuple
+
+
+def _has_field_assignment(field: DataModelFieldBase) -> bool:
+    return bool(field.field) or not (
+        field.required
+        or (field.represented_default == 'None' and field.strip_default_none)
+    )
 
 
 class DataClass(DataModel):
@@ -34,7 +39,7 @@ class DataClass(DataModel):
     ) -> None:
         super().__init__(
             reference=reference,
-            fields=fields,
+            fields=sorted(fields, key=_has_field_assignment, reverse=False),
             decorators=decorators,
             base_classes=base_classes,
             custom_base_class=custom_base_class,
@@ -46,7 +51,6 @@ class DataClass(DataModel):
             default=default,
             nullable=nullable,
         )
-        self.fields.sort(key=str, reverse=False)
 
     @property
     def imports(self) -> Tuple[Import, ...]:
@@ -103,8 +107,12 @@ class DataModelField(DataModelFieldBase):
         if not data:
             return ''
 
-        if len(data) == 1 and 'default' in data:  # pragma: no cover
-            return repr(data['default'])
+        if len(data) == 1 and 'default' in data:
+            default = data['default']
+
+            if isinstance(default, (list, dict)):
+                return f'field(default_factory=lambda :{repr(default)})'
+            return repr(default)
         kwargs = [
             f'{k}={v if k == "default_factory" else repr(v)}' for k, v in data.items()
         ]

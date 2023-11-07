@@ -2,9 +2,8 @@ from typing import Any, Dict, Optional, Sequence, Type
 
 from datamodel_code_generator import PythonVersion
 from datamodel_code_generator.imports import IMPORT_ANY, IMPORT_DECIMAL
-from datamodel_code_generator.types import DataType
+from datamodel_code_generator.types import DataType, StrictTypes, Types
 from datamodel_code_generator.types import DataTypeManager as _DataTypeManager
-from datamodel_code_generator.types import StrictTypes, Types
 
 
 def type_map_factory(
@@ -44,7 +43,7 @@ def type_map_factory(
         Types.ipv6_network: data_type_str,
         Types.boolean: data_type(type='bool'),
         Types.object: data_type.from_import(IMPORT_ANY, is_dict=True),
-        Types.null: data_type.from_import(IMPORT_ANY, is_optional=True),
+        Types.null: data_type(type='None'),
         Types.array: data_type.from_import(IMPORT_ANY, is_list=True),
         Types.any: data_type.from_import(IMPORT_ANY),
     }

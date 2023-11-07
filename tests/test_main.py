@@ -1,5 +1,6 @@
 import platform
 import shutil
+from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import call
@@ -8,17 +9,26 @@ import black
 import isort
 import pydantic
 import pytest
-from _pytest.capture import CaptureFixture
 from freezegun import freeze_time
 from packaging import version
 
-from datamodel_code_generator import InputFileType, chdir, generate
+from datamodel_code_generator import (
+    DataModelType,
+    InputFileType,
+    chdir,
+    generate,
+    inferred_message,
+)
 from datamodel_code_generator.__main__ import Exit, main
 
 try:
     from pytest import TempdirFactory
 except ImportError:
     from _pytest.tmpdir import TempdirFactory
+
+CaptureFixture = pytest.CaptureFixture
+FixtureRequest = pytest.FixtureRequest
+MonkeyPatch = pytest.MonkeyPatch
 
 DATA_PATH: Path = Path(__file__).parent / 'data'
 OPEN_API_DATA_PATH: Path = DATA_PATH / 'openapi'
@@ -30,6 +40,13 @@ CSV_DATA_PATH: Path = DATA_PATH / 'csv'
 EXPECTED_MAIN_PATH = DATA_PATH / 'expected' / 'main'
 
 TIMESTAMP = '1985-10-26T01:21:00-07:00'
+
+
+@pytest.fixture(autouse=True)
+def reset_namespace(monkeypatch: MonkeyPatch):
+    namespace_ = Namespace(no_color=False)
+    monkeypatch.setattr('datamodel_code_generator.__main__.namespace', namespace_)
+    monkeypatch.setattr('datamodel_code_generator.arguments.namespace', namespace_)
 
 
 @freeze_time('2019-07-26')
@@ -52,9 +69,6 @@ def test_main_inheritance_forward_ref():
                 EXPECTED_MAIN_PATH / 'main_inheritance_forward_ref' / 'output.py'
             ).read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -81,9 +95,6 @@ def test_main_inheritance_forward_ref_keep_model_order():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main():
@@ -102,7 +113,12 @@ def test_main():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main' / 'output.py').read_text()
         )
+    with pytest.raises(SystemExit):
+        main()
 
+
+@freeze_time('2019-07-26')
+def test_main_without_arguments():
     with pytest.raises(SystemExit):
         main()
 
@@ -127,9 +143,6 @@ def test_main_pydantic_basemodel():
             == (EXPECTED_MAIN_PATH / 'main' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_base_class():
@@ -152,9 +165,6 @@ def test_main_base_class():
             == (EXPECTED_MAIN_PATH / 'main_base_class' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_target_python_version():
@@ -175,9 +185,6 @@ def test_target_python_version():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'target_python_version' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -200,9 +207,6 @@ def test_main_autodetect():
             == (EXPECTED_MAIN_PATH / 'main_autodetect' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_autodetect_failed():
@@ -224,9 +228,6 @@ def test_main_autodetect_failed():
         )
         assert return_code == Exit.ERROR
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_jsonschema():
@@ -247,8 +248,6 @@ def test_main_jsonschema():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_jsonschema' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -297,8 +296,27 @@ def test_main_jsonschema_nested_deep():
                 / 'deep.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
+
+
+@freeze_time('2019-07-26')
+def test_main_jsonschema_nested_skip():
+    with TemporaryDirectory() as output_dir:
+        output_path: Path = Path(output_dir)
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'nested_skip.json'),
+                '--output',
+                str(output_path),
+                '--input-file-type',
+                'jsonschema',
+            ]
+        )
+        assert return_code == Exit.OK
+        nested_skip_dir = EXPECTED_MAIN_PATH / 'main_jsonschema_nested_skip'
+        for path in nested_skip_dir.rglob('*.py'):
+            result = output_path.joinpath(path.relative_to(nested_skip_dir)).read_text()
+            assert result == path.read_text()
 
 
 @freeze_time('2019-07-26')
@@ -322,8 +340,6 @@ def test_main_jsonschema_external_files():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_external_files' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -348,9 +364,6 @@ def test_main_jsonschema_multiple_files():
             ).read_text()
             assert result == path.read_text()
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_json():
@@ -371,8 +384,6 @@ def test_main_json():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_json' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -396,8 +407,6 @@ def test_space_and_special_characters_json():
                 EXPECTED_MAIN_PATH / 'space_and_special_characters' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -415,12 +424,10 @@ def test_main_json_failed():
             ]
         )
         assert return_code == Exit.ERROR
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
-def test_main_json_arrary_include_null():
+def test_main_json_array_include_null():
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -440,12 +447,23 @@ def test_main_json_arrary_include_null():
                 EXPECTED_MAIN_PATH / 'main_json_array_include_null' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_null_and_array',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_null_and_array_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_null_and_array():
+def test_main_null_and_array(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -456,15 +474,15 @@ def test_main_null_and_array():
                 str(output_file),
                 '--input-file-type',
                 'jsonschema',
+                '--output-model',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (EXPECTED_MAIN_PATH / 'main_null_and_array' / 'output.py').read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -486,8 +504,6 @@ def test_main_yaml():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_yaml' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 def test_main_modular(tmpdir_factory: TempdirFactory) -> None:
@@ -564,10 +580,25 @@ def test_main_no_file(capsys: CaptureFixture) -> None:
     assert (
         captured.out == (EXPECTED_MAIN_PATH / 'main_no_file' / 'output.py').read_text()
     )
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
-def test_main_extra_template_data_config(capsys: CaptureFixture) -> None:
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_extra_template_data_config',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_extra_template_data_config_pydantic_v2',
+        ),
+    ],
+)
+def test_main_extra_template_data_config(
+    capsys: CaptureFixture, output_model, expected_output
+) -> None:
     """Test main function with custom config data in extra template."""
 
     input_filename = OPEN_API_DATA_PATH / 'api.yaml'
@@ -580,17 +611,16 @@ def test_main_extra_template_data_config(capsys: CaptureFixture) -> None:
                 str(input_filename),
                 '--extra-template-data',
                 str(extra_template_data),
+                '--output-model',
+                output_model,
             ]
         )
 
     captured = capsys.readouterr()
     assert (
-        captured.out
-        == (
-            EXPECTED_MAIN_PATH / 'main_extra_template_data_config' / 'output.py'
-        ).read_text()
+        captured.out == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
     )
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
 def test_main_custom_template_dir_old_style(capsys: CaptureFixture) -> None:
@@ -617,7 +647,7 @@ def test_main_custom_template_dir_old_style(capsys: CaptureFixture) -> None:
         captured.out
         == (EXPECTED_MAIN_PATH / 'main_custom_template_dir' / 'output.py').read_text()
     )
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
 def test_main_custom_template_dir(capsys: CaptureFixture) -> None:
@@ -644,7 +674,7 @@ def test_main_custom_template_dir(capsys: CaptureFixture) -> None:
         captured.out
         == (EXPECTED_MAIN_PATH / 'main_custom_template_dir' / 'output.py').read_text()
     )
-    assert not captured.err
+    assert captured.err == inferred_message.format('openapi') + '\n'
 
 
 @freeze_time('2019-07-26')
@@ -686,8 +716,6 @@ def test_pyproject():
                 output_file.read_text()
                 == (EXPECTED_MAIN_PATH / 'pyproject' / 'output.py').read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -732,6 +760,19 @@ def test_stdin(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(argnames='no_color', argvalues=[False, True])
+def test_show_help(no_color: bool, capsys: CaptureFixture[str]):
+    args = ['--no-color'] if no_color else []
+    args += ['--help']
+
+    with pytest.raises(expected_exception=SystemExit):
+        return_code: Exit = main(args)
+        assert return_code == Exit.OK
+
+    output = capsys.readouterr().out
+    assert ('\x1b' not in output) == no_color
+
+
 def test_show_help_when_no_input(mocker):
     print_help_mock = mocker.patch(
         'datamodel_code_generator.__main__.arg_parser.print_help'
@@ -762,9 +803,6 @@ def test_validation():
             == (EXPECTED_MAIN_PATH / 'validation' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_validation_failed():
@@ -786,8 +824,42 @@ def test_validation_failed():
         )
 
 
+@pytest.mark.parametrize(
+    'output_model,expected_output, args',
+    [
+        ('pydantic.BaseModel', 'main_with_field_constraints', []),
+        (
+            'pydantic.BaseModel',
+            'main_with_field_constraints_use_unique_items_as_set',
+            ['--use-unique-items-as-set'],
+        ),
+        ('pydantic_v2.BaseModel', 'main_with_field_constraints_pydantic_v2', []),
+        (
+            'pydantic_v2.BaseModel',
+            'main_with_field_constraints_pydantic_v2_use_generic_container_types',
+            ['--use-generic-container-types'],
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_with_field_constraints_pydantic_v2_use_generic_container_types_set',
+            ['--use-generic-container-types', '--use-unique-items-as-set'],
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_with_field_constraints_pydantic_v2_use_standard_collections',
+            [
+                '--use-standard-collections',
+            ],
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_with_field_constraints_pydantic_v2_use_standard_collections_set',
+            ['--use-standard-collections', '--use-unique-items-as-set'],
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_with_field_constraints():
+def test_main_with_field_constraints(output_model, expected_output, args):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -797,22 +869,33 @@ def test_main_with_field_constraints():
                 '--output',
                 str(output_file),
                 '--field-constraints',
+                '--output-model-type',
+                output_model,
+                *args,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (
-                EXPECTED_MAIN_PATH / 'main_with_field_constraints' / 'output.py'
-            ).read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
 
-
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_without_field_constraints',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_without_field_constraints_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_without_field_constraints():
+def test_main_without_field_constraints(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -821,22 +904,32 @@ def test_main_without_field_constraints():
                 str(OPEN_API_DATA_PATH / 'api_constrained.yaml'),
                 '--output',
                 str(output_file),
+                '--output-model-type',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (
-                EXPECTED_MAIN_PATH / 'main_without_field_constraints' / 'output.py'
-            ).read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
 
-
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_with_aliases',
+        ),
+        (
+            'msgspec.Struct',
+            'main_with_aliases_msgspec',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_with_aliases():
+def test_main_with_aliases(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -845,6 +938,10 @@ def test_main_with_aliases():
                 str(OPEN_API_DATA_PATH / 'api.yaml'),
                 '--aliases',
                 str(OPEN_API_DATA_PATH / 'aliases.json'),
+                '--target-python',
+                '3.9',
+                '--output-model',
+                output_model,
                 '--output',
                 str(output_file),
             ]
@@ -852,11 +949,8 @@ def test_main_with_aliases():
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (EXPECTED_MAIN_PATH / 'main_with_aliases' / 'output.py').read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 def test_main_with_bad_aliases():
@@ -874,9 +968,6 @@ def test_main_with_bad_aliases():
         )
         assert return_code == Exit.ERROR
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 def test_main_with_more_bad_aliases():
     with TemporaryDirectory() as output_dir:
@@ -893,9 +984,6 @@ def test_main_with_more_bad_aliases():
         )
         assert return_code == Exit.ERROR
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 def test_main_with_bad_extra_data():
     with TemporaryDirectory() as output_dir:
@@ -911,9 +999,6 @@ def test_main_with_bad_extra_data():
             ]
         )
         assert return_code == Exit.ERROR
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -937,9 +1022,6 @@ def test_main_with_snake_case_field():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_with_strip_default_none():
@@ -962,9 +1044,6 @@ def test_main_with_strip_default_none():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 def test_disable_timestamp():
     with TemporaryDirectory() as output_dir:
@@ -983,9 +1062,6 @@ def test_disable_timestamp():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'disable_timestamp' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1007,12 +1083,22 @@ def test_enable_version_header():
             == (EXPECTED_MAIN_PATH / 'enable_version_header' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
 
-
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'allow_population_by_field_name',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'allow_population_by_field_name_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_allow_population_by_field_name():
+def test_allow_population_by_field_name(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -1022,22 +1108,32 @@ def test_allow_population_by_field_name():
                 '--output',
                 str(output_file),
                 '--allow-population-by-field-name',
+                '--output-model-type',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (
-                EXPECTED_MAIN_PATH / 'allow_population_by_field_name' / 'output.py'
-            ).read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
 
-
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'allow_extra_fields',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'allow_extra_fields_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_allow_extra_fields():
+def test_allow_extra_fields(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -1047,20 +1143,32 @@ def test_allow_extra_fields():
                 '--output',
                 str(output_file),
                 '--allow-extra-fields',
+                '--output-model-type',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (EXPECTED_MAIN_PATH / 'allow_extra_fields' / 'output.py').read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
 
-
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'enable_faux_immutability',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'enable_faux_immutability_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_enable_faux_immutability():
+def test_enable_faux_immutability(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -1070,18 +1178,15 @@ def test_enable_faux_immutability():
                 '--output',
                 str(output_file),
                 '--enable-faux-immutability',
+                '--output-model-type',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (
-                EXPECTED_MAIN_PATH / 'enable_faux_immutability' / 'output.py'
-            ).read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1103,9 +1208,6 @@ def test_use_default():
             == (EXPECTED_MAIN_PATH / 'use_default' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_force_optional():
@@ -1126,9 +1228,6 @@ def test_force_optional():
             == (EXPECTED_MAIN_PATH / 'force_optional' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_with_exclusive():
@@ -1148,9 +1247,6 @@ def test_main_with_exclusive():
             == (EXPECTED_MAIN_PATH / 'main_with_exclusive' / 'output.py').read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_subclass_enum():
@@ -1169,9 +1265,6 @@ def test_main_subclass_enum():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_subclass_enum' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1197,9 +1290,6 @@ def test_main_complicated_enum_default_member():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_json_reuse_enum_default_member():
@@ -1224,8 +1314,6 @@ def test_main_json_reuse_enum_default_member():
                 EXPECTED_MAIN_PATH / 'main_json_reuse_enum_default_member' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1297,8 +1385,6 @@ def test_main_invalid_model_name():
                 EXPECTED_MAIN_PATH / 'main_invalid_model_name' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1326,8 +1412,6 @@ def test_main_root_id_jsonschema_with_local_file(mocker):
             == (EXPECTED_MAIN_PATH / 'main_root_id' / 'output.py').read_text()
         )
         httpx_get_mock.assert_not_called()
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1358,11 +1442,14 @@ def test_main_root_id_jsonschema_with_remote_file(mocker):
         )
         httpx_get_mock.assert_has_calls(
             [
-                call('https://example.com/person.json', headers=None, verify=True),
+                call(
+                    'https://example.com/person.json',
+                    headers=None,
+                    verify=True,
+                    follow_redirects=True,
+                ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1389,8 +1476,6 @@ def test_main_root_id_jsonschema_self_refs_with_local_file(mocker):
             'filename:  root_id.json', 'filename:  root_id_self_ref.json'
         )
         httpx_get_mock.assert_not_called()
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1420,11 +1505,14 @@ def test_main_root_id_jsonschema_self_refs_with_remote_file(mocker):
         )
         httpx_get_mock.assert_has_calls(
             [
-                call('https://example.com/person.json', headers=None, verify=True),
+                call(
+                    'https://example.com/person.json',
+                    headers=None,
+                    verify=True,
+                    follow_redirects=True,
+                ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1457,11 +1545,14 @@ def test_main_root_id_jsonschema_with_absolute_remote_file(mocker):
         )
         httpx_get_mock.assert_has_calls(
             [
-                call('https://example.com/person.json', headers=None, verify=True),
+                call(
+                    'https://example.com/person.json',
+                    headers=None,
+                    verify=True,
+                    follow_redirects=True,
+                ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1485,8 +1576,6 @@ def test_main_root_id_jsonschema_with_absolute_local_file(mocker):
                 EXPECTED_MAIN_PATH / 'main_root_id_absolute_url' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1508,8 +1597,6 @@ def test_main_jsonschema_id():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_jsonschema_id' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1532,8 +1619,6 @@ def test_main_jsonschema_id_as_stdin(monkeypatch):
                 EXPECTED_MAIN_PATH / 'main_jsonschema_id_stdin' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 def test_main_jsonschema_ids(tmpdir_factory: TempdirFactory) -> None:
@@ -1703,8 +1788,6 @@ def test_main_external_definitions():
                 EXPECTED_MAIN_PATH / 'main_external_definitions' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1732,8 +1815,6 @@ def test_main_external_files_in_directory(tmpdir_factory: TempdirFactory) -> Non
                 EXPECTED_MAIN_PATH / 'main_external_files_in_directory' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1782,8 +1863,6 @@ def test_main_circular_reference():
                 EXPECTED_MAIN_PATH / 'main_circular_reference' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1805,8 +1884,6 @@ def test_main_invalid_enum_name():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_invalid_enum_name' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1833,8 +1910,6 @@ def test_main_invalid_enum_name_snake_case_field():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1857,8 +1932,6 @@ def test_main_json_reuse_model():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_json_reuse_model' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1881,8 +1954,6 @@ def test_main_json_reuse_enum():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_json_reuse_enum' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1907,8 +1978,6 @@ def test_main_json_capitalise_enum_members():
                 EXPECTED_MAIN_PATH / 'main_json_capitalise_enum_members' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1931,8 +2000,6 @@ def test_main_json_capitalise_enum_members_without_enum():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_autodetect' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1954,8 +2021,6 @@ def test_main_openapi_datetime():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_openapi_datetime' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -1979,8 +2044,6 @@ def test_main_similar_nested_array():
                 EXPECTED_MAIN_PATH / 'main_similar_nested_array' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2004,8 +2067,6 @@ def test_space_and_special_characters_dict():
                 EXPECTED_MAIN_PATH / 'space_and_special_characters_dict' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2027,8 +2088,6 @@ def test_csv_file():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'csv_file_simple' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2049,8 +2108,6 @@ def test_csv_stdin(monkeypatch):
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'csv_stdin_simple' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2091,8 +2148,6 @@ def test_main_json_pointer():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_json_pointer' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2116,8 +2171,6 @@ def test_main_nested_json_pointer():
                 EXPECTED_MAIN_PATH / 'main_nested_json_pointer' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2142,12 +2195,10 @@ def test_main_jsonschema_multiple_files_json_pointer():
             ).read_text()
             assert result == path.read_text()
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @pytest.mark.skipif(
-    pydantic.VERSION < '1.9.0', reason='Require Pydantic version 1.9.0 or later '
+    version.parse(pydantic.VERSION) < version.parse('1.9.0'),
+    reason='Require Pydantic version 1.9.0 or later ',
 )
 @freeze_time('2019-07-26')
 def test_main_openapi_enum_models_as_literal_one():
@@ -2174,8 +2225,40 @@ def test_main_openapi_enum_models_as_literal_one():
                 EXPECTED_MAIN_PATH / 'main_openapi_enum_models_one' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
+
+
+@pytest.mark.skipif(
+    version.parse(pydantic.VERSION) < version.parse('1.9.0'),
+    reason='Require Pydantic version 1.9.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_openapi_use_one_literal_as_default():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'enum_models.yaml'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'openapi',
+                '--enum-field-as-literal',
+                'one',
+                '--target-python-version',
+                '3.8',
+                '--use-one-literal-as-default',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_openapi_enum_models_one_literal_as_default'
+                / 'output.py'
+            ).read_text()
+        )
 
 
 @pytest.mark.skipif(
@@ -2207,12 +2290,11 @@ def test_main_openapi_enum_models_as_literal_all():
                 EXPECTED_MAIN_PATH / 'main_openapi_enum_models_all' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @pytest.mark.skipif(
-    pydantic.VERSION < '1.9.0', reason='Require Pydantic version 1.9.0 or later '
+    version.parse(pydantic.VERSION) < version.parse('1.9.0'),
+    reason='Require Pydantic version 1.9.0 or later ',
 )
 @freeze_time('2019-07-26')
 def test_main_openapi_enum_models_as_literal_py37(capsys):
@@ -2240,8 +2322,6 @@ def test_main_openapi_enum_models_as_literal_py37(capsys):
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2269,8 +2349,6 @@ def test_main_root_model_with_additional_properties():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2299,8 +2377,6 @@ def test_main_root_model_with_additional_properties_use_generic_container_types(
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2329,8 +2405,6 @@ def test_main_root_model_with_additional_properties_use_standard_collections():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2362,8 +2436,6 @@ def test_main_root_model_with_additional_properties_literal():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2388,9 +2460,6 @@ def test_main_jsonschema_multiple_files_ref():
             ).read_text()
             assert result == path.read_text()
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_jsonschema_multiple_files_ref_test_json():
@@ -2414,8 +2483,6 @@ def test_main_jsonschema_multiple_files_ref_test_json():
                     EXPECTED_MAIN_PATH / 'multiple_files_self_ref_single' / 'output.py'
                 ).read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2441,8 +2508,6 @@ def test_simple_json_snake_case_field():
                     EXPECTED_MAIN_PATH / 'simple_json_snake_case_field' / 'output.py'
                 ).read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2472,8 +2537,6 @@ def test_main_space_field_enum_snake_case_field():
                     / 'output.py'
                 ).read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2498,8 +2561,6 @@ def test_main_all_of_ref():
                 output_file.read_text()
                 == (EXPECTED_MAIN_PATH / 'all_of_ref' / 'output.py').read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2522,8 +2583,6 @@ def test_main_all_of_with_object():
                 output_file.read_text()
                 == (EXPECTED_MAIN_PATH / 'all_of_with_object' / 'output.py').read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2546,8 +2605,6 @@ def test_main_combined_array():
                 output_file.read_text()
                 == (EXPECTED_MAIN_PATH / 'combined_array' / 'output.py').read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2571,8 +2628,6 @@ def test_main_openapi_all_of_required():
                 EXPECTED_MAIN_PATH / 'main_openapi_allof_required' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2594,8 +2649,6 @@ def test_main_openapi_nullable():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_openapi_nullable' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2622,12 +2675,27 @@ def test_main_openapi_nullable_strict_nullable():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_pattern',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_pattern_pydantic_v2',
+        ),
+        (
+            'msgspec.Struct',
+            'main_pattern_msgspec',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_openapi_pattern():
+def test_main_openapi_pattern(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -2638,14 +2706,16 @@ def test_main_openapi_pattern():
                 str(output_file),
                 '--input-file-type',
                 'openapi',
+                '--target-python',
+                '3.9',
+                '--output-model-type',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert output_file.read_text() == (
-            EXPECTED_MAIN_PATH / 'main_pattern' / 'output.py'
+            EXPECTED_MAIN_PATH / expected_output / 'output.py'
         ).read_text().replace('pattern.json', 'pattern.yaml')
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2667,8 +2737,6 @@ def test_main_jsonschema_pattern():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_pattern' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2687,6 +2755,26 @@ def test_main_generate():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_jsonschema' / 'output.py').read_text()
         )
+
+
+@freeze_time('2019-07-26')
+def test_main_generate_non_pydantic_output():
+    """
+    See https://github.com/koxudaxi/datamodel-code-generator/issues/1452.
+    """
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        input_ = (JSON_SCHEMA_DATA_PATH / 'simple_string.json').relative_to(Path.cwd())
+        assert not input_.is_absolute()
+        generate(
+            input_=input_,
+            input_file_type=InputFileType.JsonSchema,
+            output=output_file,
+            output_model_type=DataModelType.DataclassesDataclass,
+        )
+
+        file = EXPECTED_MAIN_PATH / 'main_generate_non_pydantic_output' / 'output.py'
+        assert output_file.read_text() == file.read_text()
 
 
 @freeze_time('2019-07-26')
@@ -2844,46 +2932,52 @@ def test_main_http_jsonschema(mocker):
                     'https://example.com/external_files_in_directory/person.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/pet.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/fur.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/friends.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/food.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/machine/robot.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/drink/coffee.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/drink/tea.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -2954,46 +3048,52 @@ def test_main_http_jsonschema_with_http_headers_and_ignore_tls(
                     'https://example.com/external_files_in_directory/person.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/pet.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/fur.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/friends.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/food.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/machine/robot.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/drink/coffee.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
                 call(
                     'https://example.com/external_files_in_directory/definitions/drink/tea.json',
                     headers=headers_requests,
                     verify=True if not http_ignore_tls else False,
+                    follow_redirects=True,
                 ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3029,16 +3129,20 @@ def test_main_http_openapi(mocker):
         )
         httpx_get_mock.assert_has_calls(
             [
-                call('https://example.com/refs.yaml', headers=None, verify=True),
+                call(
+                    'https://example.com/refs.yaml',
+                    headers=None,
+                    verify=True,
+                    follow_redirects=True,
+                ),
                 call(
                     'https://teamdigitale.github.io/openapi/0.0.6/definitions.yaml',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3079,11 +3183,10 @@ def test_main_http_json(mocker):
                     'https://example.com/pet.json',
                     headers=None,
                     verify=True,
+                    follow_redirects=True,
                 ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3105,8 +3208,6 @@ def test_main_self_reference():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_self_reference' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3131,9 +3232,6 @@ def test_main_disable_appending_item_suffix():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_strict_types():
@@ -3154,8 +3252,6 @@ def test_main_strict_types():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_strict_types' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3183,8 +3279,6 @@ def test_main_strict_types_all():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_strict_types_all' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3218,8 +3312,6 @@ def test_main_strict_types_all_with_field_constraints():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3243,8 +3335,6 @@ def test_main_jsonschema_special_enum():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_special_enum' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3272,8 +3362,6 @@ def test_main_jsonschema_special_enum_special_field_name_prefix():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3301,8 +3389,6 @@ def test_main_jsonschema_special_enum_special_field_name_prefix_keep_private():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3329,8 +3415,6 @@ def test_main_jsonschema_special_model_remove_special_field_name_prefix():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3355,8 +3439,6 @@ def test_main_jsonschema_subclass_enum():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_subclass_enum' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3384,8 +3466,6 @@ def test_main_jsonschema_special_enum_empty_enum_field_name():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3409,8 +3489,6 @@ def test_main_jsonschema_special_field_name():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_special_field_name' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3434,8 +3512,6 @@ def test_main_jsonschema_complex_one_of():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_complex_one_of' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3459,8 +3535,6 @@ def test_main_jsonschema_complex_any_of():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_complex_any_of' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3486,8 +3560,6 @@ def test_main_jsonschema_combine_one_of_object():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3513,8 +3585,6 @@ def test_main_jsonschema_combine_any_of_object():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3537,8 +3607,6 @@ def test_main_jsonschema_field_include_all_keys():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_jsonschema' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3567,8 +3635,6 @@ def test_main_jsonschema_field_extras_field_include_all_keys():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3599,8 +3665,6 @@ def test_main_jsonschema_field_extras_field_extra_keys():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3624,16 +3688,27 @@ def test_main_jsonschema_field_extras():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_field_extras' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @pytest.mark.skipif(
     not isort.__version__.startswith('4.'),
     reason="isort 5.x don't sort pydantic modules",
 )
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_jsonschema_custom_type_path',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_jsonschema_custom_type_path_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_jsonschema_custom_type_path():
+def test_main_jsonschema_custom_type_path(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -3644,17 +3719,38 @@ def test_main_jsonschema_custom_type_path():
                 str(output_file),
                 '--input-file-type',
                 'jsonschema',
+                '--output-model',
+                output_model,
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_jsonschema_custom_base_path():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'custom_base_path.json'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'jsonschema',
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
             == (
-                EXPECTED_MAIN_PATH / 'main_jsonschema_custom_type_path' / 'output.py'
+                EXPECTED_MAIN_PATH / 'main_jsonschema_custom_base_path' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3681,8 +3777,6 @@ def test_main_openapi_body_and_parameters():
                 EXPECTED_MAIN_PATH / 'main_openapi_body_and_parameters' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3718,11 +3812,14 @@ def test_main_openapi_body_and_parameters_remote_ref(mocker):
         )
         httpx_get_mock.assert_has_calls(
             [
-                call('https://schema.example', headers=None, verify=True),
+                call(
+                    'https://schema.example',
+                    headers=None,
+                    verify=True,
+                    follow_redirects=True,
+                ),
             ]
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3750,8 +3847,6 @@ def test_main_openapi_body_and_parameters_only_paths():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3779,8 +3874,6 @@ def test_main_openapi_body_and_parameters_only_schemas():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3804,8 +3897,6 @@ def test_main_openapi_content_in_parameters():
                 EXPECTED_MAIN_PATH / 'main_openapi_content_in_parameters' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3832,8 +3923,6 @@ def test_main_openapi_oas_response_reference():
                 EXPECTED_MAIN_PATH / 'main_openapi_oas_response_reference' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3855,8 +3944,6 @@ def test_long_description():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_long_description' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3883,8 +3970,6 @@ def test_long_description_wrap_string_literal():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 def test_version(capsys):
@@ -3917,8 +4002,6 @@ def test_main_openapi_json_pointer():
                 EXPECTED_MAIN_PATH / 'main_openapi_json_pointer' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3942,8 +4025,6 @@ def test_jsonschema_pattern_properties():
                 EXPECTED_MAIN_PATH / 'main_pattern_properties' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3970,8 +4051,6 @@ def test_jsonschema_pattern_properties_field_constraints():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -3993,8 +4072,6 @@ def test_jsonschema_titles():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_jsonschema_titles' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4021,8 +4098,6 @@ def test_jsonschema_titles_use_title_as_name():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4049,8 +4124,6 @@ def test_jsonschema_without_titles_use_title_as_name():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4063,8 +4136,10 @@ def test_main_use_annotated_with_field_constraints():
                 str(OPEN_API_DATA_PATH / 'api_constrained.yaml'),
                 '--output',
                 str(output_file),
-                # '--field-constraints',
+                '--field-constraints',
                 '--use-annotated',
+                '--target-python-version',
+                '3.9',
             ]
         )
         assert return_code == Exit.OK
@@ -4077,8 +4152,31 @@ def test_main_use_annotated_with_field_constraints():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
+
+@freeze_time('2019-07-26')
+def test_main_use_annotated_with_field_constraints_py38():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api_constrained.yaml'),
+                '--output',
+                str(output_file),
+                '--use-annotated',
+                '--target-python-version',
+                '3.8',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_use_annotated_with_field_constraints_py38'
+                / 'output.py'
+            ).read_text()
+        )
 
 
 @freeze_time('2019-07-26')
@@ -4100,8 +4198,6 @@ def test_main_nested_enum():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_nested_enum' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4123,8 +4219,6 @@ def test_main_jsonschema_has_default_value():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'has_default_value' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4148,9 +4242,6 @@ def test_openapi_special_yaml_keywords():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_jsonschema_boolean_property():
@@ -4173,8 +4264,6 @@ def test_main_jsonschema_boolean_property():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_boolean_property' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4263,8 +4352,6 @@ def test_main_openapi_nullable_use_union_operator():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4287,9 +4374,6 @@ def test_external_relative_ref():
             ).read_text()
             assert result == path.read_text()
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_collapse_root_models():
@@ -4311,8 +4395,6 @@ def test_main_collapse_root_models():
                 EXPECTED_MAIN_PATH / 'main_collapse_root_models' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4338,8 +4420,31 @@ def test_main_collapse_root_models_field_constraints():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
+
+
+@freeze_time('2019-07-26')
+def test_main_collapse_root_models_with_references_to_flat_types():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'flat_type.jsonschema'),
+                '--output',
+                str(output_file),
+                '--collapse-root-models',
+            ]
+        )
+
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_collapse_root_models_with_references_to_flat_types'
+                / 'output.py'
+            ).read_text()
+        )
 
 
 @freeze_time('2019-07-26')
@@ -4363,8 +4468,6 @@ def test_main_openapi_max_items_enum():
                 EXPECTED_MAIN_PATH / 'main_openapi_max_items_enum' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4389,9 +4492,6 @@ def test_main_jsonschema_duplicate_name():
             ).read_text()
             assert result == path.read_text()
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_jsonschema_items_boolean():
@@ -4414,8 +4514,6 @@ def test_main_jsonschema_items_boolean():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_items_boolean' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4441,8 +4539,6 @@ def test_main_jsonschema_array_in_additional_properites():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4466,12 +4562,23 @@ def test_main_jsonschema_nullable_object():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_nullable_object' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_openapi_const',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_openapi_const_pydantic_v2',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_openapi_const():
+def test_main_openapi_const(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_file: Path = Path(output_dir) / 'output.py'
         return_code: Exit = main(
@@ -4482,15 +4589,56 @@ def test_main_openapi_const():
                 str(output_file),
                 '--input-file-type',
                 'openapi',
+                '--output-model',
+                output_model,
             ]
         )
         assert return_code == Exit.OK
         assert (
             output_file.read_text()
-            == (EXPECTED_MAIN_PATH / 'main_openapi_const' / 'output.py').read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
+
+
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_openapi_const_field',
+        ),
+        (
+            'pydantic_v2.BaseModel',
+            'main_openapi_const_field_pydantic_v2',
+        ),
+        (
+            'msgspec.Struct',
+            'main_openapi_const_field_msgspec',
+        ),
+    ],
+)
+@freeze_time('2019-07-26')
+def test_main_openapi_const_field(output_model, expected_output):
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'const.yaml'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'openapi',
+                '--output-model',
+                output_model,
+                '--collapse-root-models',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / expected_output / 'output.py').read_text()
+        )
 
 
 @freeze_time('2019-07-26')
@@ -4514,8 +4662,6 @@ def test_main_openapi_complex_reference():
                 EXPECTED_MAIN_PATH / 'main_openapi_complex_reference' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4541,8 +4687,6 @@ def test_main_openapi_reference_to_object_properties():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4569,8 +4713,6 @@ def test_main_openapi_reference_to_object_properties_collapse_root_models():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4597,8 +4739,6 @@ def test_main_openapi_override_required_all_of_field():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4622,8 +4762,6 @@ def test_main_jsonschema_object_has_one_of():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_object_has_one_of' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4647,8 +4785,6 @@ def test_main_jsonschema_json_pointer_array():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_json_pointer_array' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4671,8 +4807,6 @@ def test_main_use_default_kwarg():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_use_default_kwarg' / 'output.py').read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4697,8 +4831,6 @@ def test_main_json_snake_case_field():
                 EXPECTED_MAIN_PATH / 'main_json_snake_case_field' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @pytest.mark.filterwarnings('error')
@@ -4765,8 +4897,6 @@ def test_main_openapi_discriminator():
                 EXPECTED_MAIN_PATH / 'main_openapi_discriminator' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4792,12 +4922,23 @@ def test_main_jsonschema_pattern_properties_by_reference():
                 / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
+@pytest.mark.parametrize(
+    'output_model,expected_output',
+    [
+        (
+            'pydantic.BaseModel',
+            'main_openapi_default_object',
+        ),
+        (
+            'msgspec.Struct',
+            'main_openapi_msgspec_default_object',
+        ),
+    ],
+)
 @freeze_time('2019-07-26')
-def test_main_openapi_default_object():
+def test_main_openapi_default_object(output_model, expected_output):
     with TemporaryDirectory() as output_dir:
         output_path: Path = Path(output_dir)
         return_code: Exit = main(
@@ -4806,21 +4947,22 @@ def test_main_openapi_default_object():
                 str(OPEN_API_DATA_PATH / 'default_object.yaml'),
                 '--output',
                 str(output_dir),
+                '--output-model',
+                output_model,
                 '--input-file-type',
                 'openapi',
+                '--target-python-version',
+                '3.9',
             ]
         )
         assert return_code == Exit.OK
 
-        main_modular_dir = EXPECTED_MAIN_PATH / 'main_openapi_default_object'
+        main_modular_dir = EXPECTED_MAIN_PATH / expected_output
         for path in main_modular_dir.rglob('*.py'):
             result = output_path.joinpath(
                 path.relative_to(main_modular_dir)
             ).read_text()
-            assert result == path.read_text()
-
-    with pytest.raises(SystemExit):
-        main()
+            assert result == path.read_text(), path
 
 
 @freeze_time('2019-07-26')
@@ -4842,9 +4984,6 @@ def test_main_dataclass():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_dataclass' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4871,9 +5010,6 @@ def test_main_dataclass_base_class():
             ).read_text()
         )
 
-    with pytest.raises(SystemExit):
-        main()
-
 
 @freeze_time('2019-07-26')
 def test_main_dataclass_field():
@@ -4894,9 +5030,6 @@ def test_main_dataclass_field():
             output_file.read_text()
             == (EXPECTED_MAIN_PATH / 'main_dataclass_field' / 'output.py').read_text()
         )
-
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4932,8 +5065,6 @@ def test_main_jsonschema_enum_root_literal():
                 EXPECTED_MAIN_PATH / 'main_jsonschema_root_in_enum' / 'output.py'
             ).read_text()
         )
-    with pytest.raises(SystemExit):
-        main()
 
 
 @freeze_time('2019-07-26')
@@ -4960,5 +5091,834 @@ def test_main_jsonschema_reference_same_hierarchy_directory():
                     / 'output.py'
                 ).read_text()
             )
-    with pytest.raises(SystemExit):
-        main()
+
+
+@freeze_time('2019-07-26')
+def test_main_multiple_required_any_of():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'multiple_required_any_of.yaml'),
+                '--output',
+                str(output_file),
+                '--collapse-root-models',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_multiple_required_any_of' / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_nullable_any_of():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'nullable_any_of.json'),
+                '--output',
+                str(output_file),
+                '--field-constraints',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_nullable_any_of' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_nullable_any_of_use_union_operator():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'nullable_any_of.json'),
+                '--output',
+                str(output_file),
+                '--field-constraints',
+                '--use-union-operator',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_nullable_any_of_use_union_operator'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_nested_all_of():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'nested_all_of.json'),
+                '--output',
+                str(output_file),
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_nested_all_of' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_max_min_openapi():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'max_min_number.yaml'),
+                '--output',
+                str(output_file),
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'max_min_number' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_use_operation_id_as_name():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--use-operation-id-as-name',
+                '--openapi-scopes',
+                'paths',
+                'schemas',
+                'parameters',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_use_operation_id_as_name' / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_use_operation_id_as_name_not_found_operation_id(capsys):
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'body_and_parameters.yaml'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'openapi',
+                '--use-operation-id-as-name',
+                '--openapi-scopes',
+                'paths',
+                'schemas',
+                'parameters',
+            ]
+        )
+        captured = capsys.readouterr()
+        assert return_code == Exit.ERROR
+        assert (
+            captured.err
+            == 'All operations must have an operationId when --use_operation_id_as_name is set.'
+            'The following path was missing an operationId: pets\n'
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_unsorted_optional_fields():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'unsorted_optional_fields.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'dataclasses.dataclass',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'unsorted_optional_fields' / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_all_of_any_of():
+    with TemporaryDirectory() as output_dir:
+        output_path: Path = Path(output_dir)
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'all_of_any_of'),
+                '--output',
+                str(output_path),
+                '--input-file-type',
+                'jsonschema',
+            ]
+        )
+        assert return_code == Exit.OK
+        all_of_any_of_dir = EXPECTED_MAIN_PATH / 'main_all_of_any_of'
+        for path in all_of_any_of_dir.rglob('*.py'):
+            result = output_path.joinpath(
+                path.relative_to(all_of_any_of_dir)
+            ).read_text()
+            assert result == path.read_text()
+
+
+@freeze_time('2019-07-26')
+def test_main_all_of_one_of():
+    with TemporaryDirectory() as output_dir:
+        output_path: Path = Path(output_dir)
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'all_of_one_of'),
+                '--output',
+                str(output_path),
+                '--input-file-type',
+                'jsonschema',
+            ]
+        )
+        assert return_code == Exit.OK
+        all_of_any_of_dir = EXPECTED_MAIN_PATH / 'main_all_of_one_of'
+        for path in all_of_any_of_dir.rglob('*.py'):
+            result = output_path.joinpath(
+                path.relative_to(all_of_any_of_dir)
+            ).read_text()
+            assert result == path.read_text()
+
+
+@freeze_time('2019-07-26')
+def test_main_null():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'null.json'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'jsonschema',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_null' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_typed_dict():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_typed_dict' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_typed_dict_py_38():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.8',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_typed_dict_py_38' / 'output.py').read_text()
+        )
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_typed_dict_space_and_special_characters():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_DATA_PATH / 'space_and_special_characters.json'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_typed_dict_space_and_special_characters'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+def test_main_modular_typed_dict(tmpdir_factory: TempdirFactory) -> None:
+    """Test main function on modular file."""
+
+    output_directory = Path(tmpdir_factory.mktemp('output'))
+
+    input_filename = OPEN_API_DATA_PATH / 'modular.yaml'
+    output_path = output_directory / 'model'
+
+    with freeze_time(TIMESTAMP):
+        main(
+            [
+                '--input',
+                str(input_filename),
+                '--output',
+                str(output_path),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+            ]
+        )
+    main_modular_dir = EXPECTED_MAIN_PATH / 'main_modular_typed_dict'
+    for path in main_modular_dir.rglob('*.py'):
+        result = output_path.joinpath(path.relative_to(main_modular_dir)).read_text()
+        assert result == path.read_text()
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_typed_dict_special_field_name_with_inheritance_model():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(
+                    JSON_SCHEMA_DATA_PATH
+                    / 'special_field_name_with_inheritance_model.json'
+                ),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_typed_dict_special_field_name_with_inheritance_model'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_typed_dict_not_required_nullable():
+    """Test main function writing to TypedDict, with combos of Optional/NotRequired."""
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'not_required_nullable.json'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_typed_dict_not_required_nullable'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_typed_dict_nullable():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'nullable.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_typed_dict_nullable' / 'output.py'
+            ).read_text()
+        )
+
+
+@pytest.mark.skipif(
+    version.parse(black.__version__) < version.parse('23.3.0'),
+    reason='Require Black version 23.3.0 or later ',
+)
+@freeze_time('2019-07-26')
+def test_main_typed_dict_nullable_strict_nullable():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'nullable.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'typing.TypedDict',
+                '--target-python-version',
+                '3.11',
+                '--strict-nullable',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_typed_dict_nullable_strict_nullable'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_custom_file_header_path():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--custom-file-header-path',
+                str(DATA_PATH / 'custom_file_header.txt'),
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_custom_file_header' / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_custom_file_header_duplicate_options(capsys):
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--custom-file-header-path',
+                str(DATA_PATH / 'custom_file_header.txt'),
+                '--custom-file-header',
+                'abc',
+            ]
+        )
+
+        captured = capsys.readouterr()
+        assert return_code == Exit.ERROR
+        assert (
+            captured.err
+            == '`--custom_file_header_path` can not be used with `--custom_file_header`.\n'
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_pydantic_v2():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_pydantic_v2' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_openapi_custom_id_pydantic_v2():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'custom_id.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_openapi_custom_id_pydantic_v2' / 'output.py'
+            ).read_text()
+        )
+
+
+@pytest.mark.skipif(
+    not isort.__version__.startswith('4.'),
+    reason="isort 5.x don't sort pydantic modules",
+)
+@freeze_time('2019-07-26')
+def test_main_openapi_custom_id_pydantic_v2_custom_base():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'custom_id.yaml'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+                '--base-class',
+                'custom_base.Base',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_openapi_custom_id_pydantic_v2_custom_base'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_jsonschema_discriminator_literals():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'discriminator_literals.json'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_jsonschema_discriminator_literals'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_openapi_all_of_with_relative_ref():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'all_of_with_relative_ref' / 'openapi.yaml'),
+                '--output',
+                str(output_file),
+                '--input-file-type',
+                'openapi',
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+                '--keep-model-order',
+                '--collapse-root-models',
+                '--field-constraints',
+                '--use-title-as-name',
+                '--field-include-all-keys',
+                '--use-field-description',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_all_of_with_relative_ref' / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_msgspec_struct():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api.yaml'),
+                '--output',
+                str(output_file),
+                # min msgspec python version is 3.8
+                '--target-python-version',
+                '3.8',
+                '--output-model-type',
+                'msgspec.Struct',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (EXPECTED_MAIN_PATH / 'main_msgspec_struct' / 'output.py').read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_msgspec_use_annotated_with_field_constraints():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(OPEN_API_DATA_PATH / 'api_constrained.yaml'),
+                '--output',
+                str(output_file),
+                '--field-constraints',
+                '--target-python-version',
+                '3.9',
+                '--output-model-type',
+                'msgspec.Struct',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH
+                / 'main_use_annotated_with_msgspec_meta_constraints'
+                / 'output.py'
+            ).read_text()
+        )
+
+
+@freeze_time('2019-07-26')
+def test_main_duplicate_field_constraints():
+    with TemporaryDirectory() as output_dir:
+        output_path: Path = Path(output_dir)
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'duplicate_field_constraints'),
+                '--output',
+                str(output_path),
+                '--input-file-type',
+                'jsonschema',
+                '--collapse-root-models',
+                '--output-model-type',
+                'pydantic_v2.BaseModel',
+            ]
+        )
+        assert return_code == Exit.OK
+        main_modular_dir = EXPECTED_MAIN_PATH / 'duplicate_field_constraints'
+        for path in main_modular_dir.rglob('*.py'):
+            result = output_path.joinpath(
+                path.relative_to(main_modular_dir)
+            ).read_text()
+            assert result == path.read_text()
+
+
+@pytest.mark.parametrize(
+    'collapse_root_models,python_version,expected_output',
+    [
+        (
+            '--collapse-root-models',
+            '3.8',
+            'duplicate_field_constraints_msgspec_py38_collapse_root_models',
+        ),
+        (
+            None,
+            '3.9',
+            'duplicate_field_constraints_msgspec',
+        ),
+    ],
+)
+@freeze_time('2019-07-26')
+def test_main_duplicate_field_constraints_msgspec(
+    collapse_root_models, python_version, expected_output
+):
+    with TemporaryDirectory() as output_dir:
+        output_path: Path = Path(output_dir)
+        return_code: Exit = main(
+            [
+                a
+                for a in [
+                    '--input',
+                    str(JSON_SCHEMA_DATA_PATH / 'duplicate_field_constraints'),
+                    '--output',
+                    str(output_path),
+                    '--input-file-type',
+                    'jsonschema',
+                    '--output-model-type',
+                    'msgspec.Struct',
+                    '--target-python-version',
+                    python_version,
+                    collapse_root_models,
+                ]
+                if a
+            ]
+        )
+        assert return_code == Exit.OK
+        main_modular_dir = EXPECTED_MAIN_PATH / expected_output
+        for path in main_modular_dir.rglob('*.py'):
+            result = output_path.joinpath(
+                path.relative_to(main_modular_dir)
+            ).read_text()
+            assert result == path.read_text()
+
+
+@freeze_time('2019-07-26')
+def test_main_dataclass_field_defs():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'user_defs.json'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'dataclasses.dataclass',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert output_file.read_text() == (
+            EXPECTED_MAIN_PATH / 'main_dataclass_field' / 'output.py'
+        ).read_text().replace('filename:  user.json', 'filename:  user_defs.json')
+
+
+@freeze_time('2019-07-26')
+def test_main_dataclass_default():
+    with TemporaryDirectory() as output_dir:
+        output_file: Path = Path(output_dir) / 'output.py'
+        return_code: Exit = main(
+            [
+                '--input',
+                str(JSON_SCHEMA_DATA_PATH / 'user_default.json'),
+                '--output',
+                str(output_file),
+                '--output-model-type',
+                'dataclasses.dataclass',
+            ]
+        )
+        assert return_code == Exit.OK
+        assert (
+            output_file.read_text()
+            == (
+                EXPECTED_MAIN_PATH / 'main_dataclass_field_default' / 'output.py'
+            ).read_text()
+        )

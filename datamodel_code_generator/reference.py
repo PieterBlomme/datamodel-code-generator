@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 from collections import defaultdict
 from contextlib import contextmanager
@@ -10,6 +8,7 @@ from keyword import iskeyword
 from pathlib import Path, PurePath
 from typing import (
     TYPE_CHECKING,
+    AbstractSet,
     Any,
     Callable,
     ClassVar,
@@ -33,12 +32,17 @@ from urllib.parse import ParseResult, urlparse
 import inflect
 import pydantic
 from packaging import version
-from pydantic import BaseModel, validator
+from pydantic import BaseModel
 
-from datamodel_code_generator import cached_property
+from datamodel_code_generator.util import (
+    PYDANTIC_V2,
+    ConfigDict,
+    cached_property,
+    field_validator,
+)
 
 if TYPE_CHECKING:
-    from pydantic.typing import AbstractSetIntStr, DictStrAny, MappingIntStrAny
+    from pydantic.typing import DictStrAny
 
 
 class _BaseModel(BaseModel):
@@ -53,39 +57,71 @@ class _BaseModel(BaseModel):
                 if pass_field_name in values:
                     setattr(self, pass_field_name, values[pass_field_name])
 
-    def dict(
-        self,
-        *,
-        include: Union[AbstractSetIntStr, MappingIntStrAny] = None,
-        exclude: Union[AbstractSetIntStr, MappingIntStrAny] = None,
-        by_alias: bool = False,
-        skip_defaults: bool = None,
-        exclude_unset: bool = False,
-        exclude_defaults: bool = False,
-        exclude_none: bool = False,
-    ) -> DictStrAny:
-        return super().dict(
-            include=include,
-            exclude=set(exclude or ()) | self._exclude_fields,
-            by_alias=by_alias,
-            skip_defaults=skip_defaults,
-            exclude_unset=exclude_unset,
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-        )
+    if not TYPE_CHECKING:
+        if PYDANTIC_V2:
+
+            def dict(
+                self,
+                *,
+                include: Union[
+                    AbstractSet[Union[int, str]], Mapping[Union[int, str], Any], None
+                ] = None,
+                exclude: Union[
+                    AbstractSet[Union[int, str]], Mapping[Union[int, str], Any], None
+                ] = None,
+                by_alias: bool = False,
+                exclude_unset: bool = False,
+                exclude_defaults: bool = False,
+                exclude_none: bool = False,
+            ) -> 'DictStrAny':
+                return self.model_dump(
+                    include=include,
+                    exclude=set(exclude or ()) | self._exclude_fields,
+                    by_alias=by_alias,
+                    exclude_unset=exclude_unset,
+                    exclude_defaults=exclude_defaults,
+                    exclude_none=exclude_none,
+                )
+
+        else:
+
+            def dict(
+                self,
+                *,
+                include: Union[
+                    AbstractSet[Union[int, str]], Mapping[Union[int, str], Any], None
+                ] = None,
+                exclude: Union[
+                    AbstractSet[Union[int, str]], Mapping[Union[int, str], Any], None
+                ] = None,
+                by_alias: bool = False,
+                skip_defaults: Optional[bool] = None,
+                exclude_unset: bool = False,
+                exclude_defaults: bool = False,
+                exclude_none: bool = False,
+            ) -> 'DictStrAny':
+                return super().dict(
+                    include=include,
+                    exclude=set(exclude or ()) | self._exclude_fields,
+                    by_alias=by_alias,
+                    skip_defaults=skip_defaults,
+                    exclude_unset=exclude_unset,
+                    exclude_defaults=exclude_defaults,
+                    exclude_none=exclude_none,
+                )
 
 
 class Reference(_BaseModel):
     path: str
     original_name: str = ''
     name: str
-    duplicate_name: Optional[str]
+    duplicate_name: Optional[str] = None
     loaded: bool = True
     source: Optional[Any] = None
     children: List[Any] = []
     _exclude_fields: ClassVar[Set[str]] = {'children'}
 
-    @validator('original_name')
+    @field_validator('original_name')
     def validate_original_name(cls, v: Any, values: Dict[str, Any]) -> str:
         """
         If original_name is empty then, `original_name` is assigned `name`
@@ -94,14 +130,24 @@ class Reference(_BaseModel):
             return v
         return values.get('name', v)  # pragma: no cover
 
-    class Config:
-        arbitrary_types_allowed = True
-        keep_untouched = (cached_property,)
-        copy_on_model_validation = (
-            False
-            if version.parse(pydantic.VERSION) < version.parse('1.9.2')
-            else 'none'
+    if PYDANTIC_V2:
+        # TODO[pydantic]: The following keys were removed: `copy_on_model_validation`.
+        # Check https://docs.pydantic.dev/dev-v2/migration/#changes-to-config for more information.
+        model_config = ConfigDict(
+            arbitrary_types_allowed=True,
+            ignored_types=(cached_property,),
+            revalidate_instances='never',
         )
+    else:
+
+        class Config:
+            arbitrary_types_allowed = True
+            keep_untouched = (cached_property,)
+            copy_on_model_validation = (
+                False
+                if version.parse(pydantic.VERSION) < version.parse('1.9.2')
+                else 'none'
+            )
 
     @property
     def short_name(self) -> str:
@@ -183,7 +229,7 @@ class FieldNameResolver:
 
         name = re.sub(r'[¹²³⁴⁵⁶⁷⁸⁹]|\W', '_', name)
         if name[0].isnumeric():
-            name = f'_{name}'
+            name = f'{self.special_field_name_prefix}_{name}'
 
         # We should avoid having a field begin with an underscore, as it
         # causes pydantic to consider it as private
@@ -229,6 +275,7 @@ class FieldNameResolver:
 class PydanticFieldNameResolver(FieldNameResolver):
     @classmethod
     def _validate_field_name(cls, field_name: str) -> bool:
+        # TODO: Support Pydantic V2
         return not hasattr(BaseModel, field_name)
 
 
@@ -286,7 +333,7 @@ def get_relative_path(base_path: PurePath, target_path: PurePath) -> PurePath:
 class ModelResolver:
     def __init__(
         self,
-        exclude_names: Set[str] = None,
+        exclude_names: Optional[Set[str]] = None,
         duplicate_name_suffix: Optional[str] = None,
         base_url: Optional[str] = None,
         singular_name_suffix: Optional[str] = None,
@@ -431,22 +478,20 @@ class ModelResolver:
                 joined_path += f'#{object_part[0]}'
         if ID_PATTERN.match(joined_path):
             ref: str = self.ids['/'.join(self.current_root)][joined_path]
-        elif (
-            '#' not in joined_path
-            and self.root_id_base_path
-            and self.current_root != path
-        ):
-            if is_url(joined_path) or Path(self._base_path, joined_path).is_file():
-                ref = f'{joined_path}#'
-            else:
-                ref = f'{self.root_id_base_path}/{joined_path}#'
         else:
             if '#' not in joined_path:
                 joined_path += '#'
-            if joined_path[0] == '#':
+            elif joined_path[0] == '#':
                 joined_path = f'{"/".join(self.current_root)}{joined_path}'
+
             delimiter = joined_path.index('#')
+            file_path = ''.join(joined_path[:delimiter])
             ref = f"{''.join(joined_path[:delimiter])}#{''.join(joined_path[delimiter + 1:])}"
+            if self.root_id_base_path and not (
+                is_url(joined_path) or Path(self._base_path, file_path).is_file()
+            ):
+                ref = f'{self.root_id_base_path}/{ref}'
+
         if self.base_url:
             from .http import join_url
 

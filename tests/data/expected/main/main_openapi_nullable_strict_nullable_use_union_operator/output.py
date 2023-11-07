@@ -72,3 +72,12 @@ class Name(BaseModel):
 
 class Tag(BaseModel):
     __root__: str
+
+
+class Notes(BaseModel):
+    comments: List[str] = Field(default_factory=list)
+
+
+class Options(BaseModel):
+    comments: List[str | None]
+    oneOfComments: List[str | float | None]

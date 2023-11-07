@@ -93,7 +93,12 @@ def test_json_schema_object_ref_url_json(mocker):
     parser.parse_ref(obj, ['Model'])
     mock_get.assert_has_calls(
         [
-            call('https://example.com/person.schema.json', headers=None, verify=True),
+            call(
+                'https://example.com/person.schema.json',
+                headers=None,
+                verify=True,
+                follow_redirects=True,
+            ),
         ]
     )
 
@@ -113,7 +118,7 @@ def test_json_schema_object_ref_url_yaml(mocker):
         dump_templates(list(parser.results))
         == """class User(BaseModel):
     name: Optional[str] = Field(None, example='ken')
-    pets: Optional[List[User]] = Field(default_factory=list)
+    pets: List[User] = Field(default_factory=list)
 
 
 class Pet(BaseModel):
@@ -121,7 +126,10 @@ class Pet(BaseModel):
     )
     parser.parse_ref(obj, [])
     mock_get.assert_called_once_with(
-        'https://example.org/schema.yaml', headers=None, verify=True
+        'https://example.org/schema.yaml',
+        headers=None,
+        verify=True,
+        follow_redirects=True,
     )
 
 
@@ -151,10 +159,13 @@ def test_json_schema_object_cached_ref_url_yaml(mocker):
 
 class User(BaseModel):
     name: Optional[str] = Field(None, example='ken')
-    pets: Optional[List[User]] = Field(default_factory=list)"""
+    pets: List[User] = Field(default_factory=list)"""
     )
     mock_get.assert_called_once_with(
-        'https://example.org/schema.yaml', headers=None, verify=True
+        'https://example.org/schema.yaml',
+        headers=None,
+        verify=True,
+        follow_redirects=True,
     )
 
 
@@ -178,14 +189,17 @@ def test_json_schema_ref_url_json(mocker):
 
 class User(BaseModel):
     name: Optional[str] = Field(None, example='ken')
-    pets: Optional[List[User]] = Field(default_factory=list)
+    pets: List[User] = Field(default_factory=list)
 
 
 class Pet(BaseModel):
     name: Optional[str] = Field(None, examples=['dog', 'cat'])"""
     )
     mock_get.assert_called_once_with(
-        'https://example.org/schema.json', headers=None, verify=True
+        'https://example.org/schema.json',
+        headers=None,
+        verify=True,
+        follow_redirects=True,
     )
 
 
@@ -363,10 +377,12 @@ def test_parse_nested_array():
     [
         ('integer', 'int32', 'int', None, None),
         ('integer', 'int64', 'int', None, None),
+        ('integer', 'date-time', 'datetime', 'datetime', 'datetime'),
         ('integer', 'unix-time', 'int', None, None),
         ('number', 'float', 'float', None, None),
         ('number', 'double', 'float', None, None),
         ('number', 'time', 'time', 'datetime', 'time'),
+        ('number', 'date-time', 'datetime', 'datetime', 'datetime'),
         ('string', None, 'str', None, None),
         ('string', 'byte', 'str', None, None),
         ('string', 'binary', 'bytes', None, None),
@@ -423,3 +439,18 @@ def test_get_data_type_array(schema_types, result_types):
         ],
         is_optional='null' in schema_types,
     )
+
+
+def test_additional_imports():
+    """Test that additional imports are inside imports container."""
+    new_parser = JsonSchemaParser(source='', additional_imports=['collections.deque'])
+    assert len(new_parser.imports) == 1
+    assert new_parser.imports['collections'] == {'deque'}
+
+
+def test_no_additional_imports():
+    """Test that not additional imports are not affecting imports container."""
+    new_parser = JsonSchemaParser(
+        source='',
+    )
+    assert len(new_parser.imports) == 0

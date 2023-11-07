@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -29,57 +30,17 @@ from urllib.parse import ParseResult
 import pysnooper
 import yaml
 
-if TYPE_CHECKING:
-    cached_property = property
-    from yaml import SafeLoader
-
-    Protocol = object
-    runtime_checkable: Callable[..., Any]
-else:
-    try:
-        from typing import Protocol
-    except ImportError:
-        from typing_extensions import Protocol  # noqa
-    try:
-        from typing import runtime_checkable
-    except ImportError:
-        from typing_extensions import runtime_checkable  # noqa
-    try:
-        from yaml import CSafeLoader as SafeLoader
-    except ImportError:  # pragma: no cover
-        from yaml import SafeLoader
-
-    try:
-        from functools import cached_property
-    except ImportError:
-        _NOT_FOUND = object()
-
-        class cached_property:
-            def __init__(self, func: Callable) -> None:
-                self.func: Callable = func
-                self.__doc__: Any = func.__doc__
-
-            def __get__(self, instance: Any, owner: Any = None) -> Any:
-                value = instance.__dict__.get(self.func.__name__, _NOT_FOUND)
-                if value is _NOT_FOUND:  # pragma: no cover
-                    value = instance.__dict__[self.func.__name__] = self.func(instance)
-                return value
-
-
 from datamodel_code_generator.format import PythonVersion
 from datamodel_code_generator.parser import DefaultPutDict, LiteralType
 from datamodel_code_generator.parser.base import Parser
 from datamodel_code_generator.types import StrictTypes
+from datamodel_code_generator.util import SafeLoader  # type: ignore
 
 T = TypeVar('T')
 
 pysnooper.tracer.DISABLED = True
 
 DEFAULT_BASE_CLASS: str = 'pydantic.BaseModel'
-
-SafeLoader.yaml_constructors[
-    'tag:yaml.org,2002:timestamp'
-] = SafeLoader.yaml_constructors['tag:yaml.org,2002:str']
 
 
 def load_yaml(stream: Union[str, TextIO]) -> Any:
@@ -167,6 +128,37 @@ def is_openapi(text: str) -> bool:
     return 'openapi' in load_yaml(text)
 
 
+JSON_SCHEMA_URLS: Tuple[str, ...] = (
+    'http://json-schema.org/',
+    'https://json-schema.org/',
+)
+
+
+def is_schema(text: str) -> bool:
+    data = load_yaml(text)
+    if not isinstance(data, dict):
+        return False
+    schema = data.get('$schema')
+    if isinstance(schema, str) and any(
+        schema.startswith(u) for u in JSON_SCHEMA_URLS
+    ):  # pragma: no cover
+        return True
+    if isinstance(data.get('type'), str):
+        return True
+    if any(
+        isinstance(data.get(o), list)
+        for o in (
+            'allOf',
+            'anyOf',
+            'oneOf',
+        )
+    ):
+        return True
+    if isinstance(data.get('properties'), dict):
+        return True
+    return False
+
+
 class InputFileType(Enum):
     Auto = 'auto'
     OpenAPI = 'openapi'
@@ -187,7 +179,10 @@ RAW_DATA_TYPES: List[InputFileType] = [
 
 class DataModelType(Enum):
     PydanticBaseModel = 'pydantic.BaseModel'
+    PydanticV2BaseModel = 'pydantic_v2.BaseModel'
     DataclassesDataclass = 'dataclasses.dataclass'
+    TypingTypedDict = 'typing.TypedDict'
+    MsgspecStruct = 'msgspec.Struct'
 
 
 class OpenAPIScope(Enum):
@@ -230,7 +225,8 @@ def generate(
     output: Optional[Path] = None,
     output_model_type: DataModelType = DataModelType.PydanticBaseModel,
     target_python_version: PythonVersion = PythonVersion.PY_37,
-    base_class: str = DEFAULT_BASE_CLASS,
+    base_class: str = '',
+    additional_imports: Optional[List[str]] = None,
     custom_template_dir: Optional[Path] = None,
     extra_template_data: Optional[DefaultDict[str, Dict[str, Any]]] = None,
     validation: bool = False,
@@ -252,6 +248,7 @@ def generate(
     reuse_model: bool = False,
     encoding: str = 'utf-8',
     enum_field_as_literal: Optional[LiteralType] = None,
+    use_one_literal_as_default: bool = False,
     set_default_enum_member: bool = False,
     use_subclass_enum: bool = False,
     strict_nullable: bool = False,
@@ -267,6 +264,8 @@ def generate(
     openapi_scopes: Optional[List[OpenAPIScope]] = None,
     wrap_string_literal: Optional[bool] = None,
     use_title_as_name: bool = False,
+    use_operation_id_as_name: bool = False,
+    use_unique_items_as_set: bool = False,
     http_headers: Optional[Sequence[Tuple[str, str]]] = None,
     http_ignore_tls: bool = False,
     use_annotated: bool = False,
@@ -279,6 +278,8 @@ def generate(
     remove_special_field_name_prefix: bool = False,
     capitalise_enum_members: bool = False,
     keep_model_order: bool = False,
+    custom_file_header: Optional[str] = None,
+    custom_file_header_path: Optional[Path] = None,
 ) -> None:
     remote_text_cache: DefaultPutDict[str, str] = DefaultPutDict()
     if isinstance(input_, str):
@@ -302,10 +303,11 @@ def generate(
                 if isinstance(input_, Path)
                 else input_text
             )
-            input_file_type = (
-                InputFileType.OpenAPI
-                if is_openapi(input_text_)  # type: ignore
-                else InputFileType.JsonSchema
+            assert isinstance(input_text_, str)
+            input_file_type = infer_input_type(input_text_)
+            print(
+                inferred_message.format(input_file_type.value),
+                file=sys.stderr,
             )
         except:  # noqa
             raise Error('Invalid file format')
@@ -361,7 +363,7 @@ def generate(
 
     from datamodel_code_generator.model import get_data_model_types
 
-    data_model_types = get_data_model_types(output_model_type)
+    data_model_types = get_data_model_types(output_model_type, target_python_version)
     parser = parser_class(
         source=input_text or input_,
         data_model_type=data_model_types.data_model,
@@ -369,6 +371,7 @@ def generate(
         data_model_field_type=data_model_types.field_model,
         data_type_manager_type=data_model_types.data_type_manager,
         base_class=base_class,
+        additional_imports=additional_imports,
         custom_template_dir=custom_template_dir,
         extra_template_data=extra_template_data,
         target_python_version=target_python_version,
@@ -391,7 +394,10 @@ def generate(
         use_field_description=use_field_description,
         use_default_kwarg=use_default_kwarg,
         reuse_model=reuse_model,
-        enum_field_as_literal=enum_field_as_literal,
+        enum_field_as_literal=LiteralType.All
+        if output_model_type == DataModelType.TypingTypedDict
+        else enum_field_as_literal,
+        use_one_literal_as_default=use_one_literal_as_default,
         set_default_enum_member=set_default_enum_member,
         use_subclass_enum=use_subclass_enum,
         strict_nullable=strict_nullable,
@@ -407,6 +413,8 @@ def generate(
         field_extra_keys_without_x_prefix=field_extra_keys_without_x_prefix,
         wrap_string_literal=wrap_string_literal,
         use_title_as_name=use_title_as_name,
+        use_operation_id_as_name=use_operation_id_as_name,
+        use_unique_items_as_set=use_unique_items_as_set,
         http_headers=http_headers,
         http_ignore_tls=http_ignore_tls,
         use_annotated=use_annotated,
@@ -419,6 +427,7 @@ def generate(
         remove_special_field_name_prefix=remove_special_field_name_prefix,
         capitalise_enum_members=capitalise_enum_members,
         keep_model_order=keep_model_order,
+        known_third_party=data_model_types.known_third_party,
         **kwargs,
     )
 
@@ -450,6 +459,9 @@ def generate(
 
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
+    if custom_file_header is None and custom_file_header_path:
+        custom_file_header = custom_file_header_path.read_text(encoding=encoding)
+
     header = """\
 # generated by datamodel-codegen:
 #   filename:  {}"""
@@ -459,8 +471,7 @@ def generate(
         header += f'\n#   version:   {get_version()}'
 
     file: Optional[IO[Any]]
-    for path, body_and_filename in modules.items():
-        body, filename = body_and_filename
+    for path, (body, filename) in modules.items():
         if path is None:
             file = None
         else:
@@ -468,7 +479,7 @@ def generate(
                 path.parent.mkdir(parents=True)
             file = path.open('wt', encoding=encoding)
 
-        print(header.format(filename), file=file)
+        print(custom_file_header or header.format(filename), file=file)
         if body:
             print('', file=file)
             print(body.rstrip(), file=file)
@@ -477,4 +488,25 @@ def generate(
             file.close()
 
 
-__all__ = ['DefaultPutDict', 'LiteralType', 'PythonVersion']
+def infer_input_type(text: str) -> InputFileType:
+    if is_openapi(text):
+        return InputFileType.OpenAPI
+    elif is_schema(text):
+        return InputFileType.JsonSchema
+    return InputFileType.Json
+
+
+inferred_message = (
+    'The input file type was determined to be: {}\nThis can be specificied explicitly with the '
+    '`--input-file-type` option.'
+)
+
+__all__ = [
+    'DefaultPutDict',
+    'Error',
+    'InputFileType',
+    'InvalidClassNameError',
+    'LiteralType',
+    'PythonVersion',
+    'generate',
+]
