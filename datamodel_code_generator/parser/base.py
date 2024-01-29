@@ -27,8 +27,15 @@ from urllib.parse import ParseResult
 from pydantic import BaseModel
 
 from datamodel_code_generator.format import CodeFormatter, PythonVersion
-from datamodel_code_generator.imports import IMPORT_ANNOTATIONS, Import, Imports
+from datamodel_code_generator.imports import (
+    IMPORT_ANNOTATIONS,
+    IMPORT_LITERAL,
+    IMPORT_LITERAL_BACKPORT,
+    Import,
+    Imports,
+)
 from datamodel_code_generator.model import pydantic as pydantic_model
+from datamodel_code_generator.model import pydantic_v2 as pydantic_model_v2
 from datamodel_code_generator.model.base import (
     ALL_MODEL,
     UNDEFINED,
@@ -54,7 +61,7 @@ def get_special_path(keyword: str, path: List[str]) -> List[str]:
 escape_characters = str.maketrans(
     {
         '\\': r'\\',
-        "'": r"\'",
+        "'": r'\'',
         '\b': r'\b',
         '\f': r'\f',
         '\n': r'\n',
@@ -244,7 +251,7 @@ T = TypeVar('T')
 
 def get_most_of_parent(value: Any, type_: Optional[Type[T]] = None) -> Optional[T]:
     if isinstance(value, Child) and (type_ is None or not isinstance(value, type_)):
-        return get_most_of_parent(value.parent)
+        return get_most_of_parent(value.parent, type_)
     return value
 
 
@@ -382,6 +389,8 @@ class Parser(ABC):
         keep_model_order: bool = False,
         use_one_literal_as_default: bool = False,
         known_third_party: Optional[List[str]] = None,
+        custom_formatters: Optional[List[str]] = None,
+        custom_formatters_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.data_type_manager: DataTypeManager = data_type_manager_type(
             python_version=target_python_version,
@@ -407,12 +416,12 @@ class Parser(ABC):
         self.field_constraints: bool = field_constraints
         self.snake_case_field: bool = snake_case_field
         self.strip_default_none: bool = strip_default_none
-        self.apply_default_values_for_required_fields: bool = (
-            apply_default_values_for_required_fields
-        )
-        self.force_optional_for_required_fields: bool = (
-            force_optional_for_required_fields
-        )
+        self.apply_default_values_for_required_fields: (
+            bool
+        ) = apply_default_values_for_required_fields
+        self.force_optional_for_required_fields: (
+            bool
+        ) = force_optional_for_required_fields
         self.use_schema_description: bool = use_schema_description
         self.use_field_description: bool = use_field_description
         self.use_default_kwarg: bool = use_default_kwarg
@@ -453,9 +462,9 @@ class Parser(ABC):
 
         self.source: Union[str, Path, List[Path], ParseResult] = source
         self.custom_template_dir = custom_template_dir
-        self.extra_template_data: DefaultDict[
-            str, Any
-        ] = extra_template_data or defaultdict(dict)
+        self.extra_template_data: DefaultDict[str, Any] = (
+            extra_template_data or defaultdict(dict)
+        )
 
         if allow_population_by_field_name:
             self.extra_template_data[ALL_MODEL]['allow_population_by_field_name'] = True
@@ -498,6 +507,8 @@ class Parser(ABC):
         self.keep_model_order = keep_model_order
         self.use_one_literal_as_default = use_one_literal_as_default
         self.known_third_party = known_third_party
+        self.custom_formatter = custom_formatters
+        self.custom_formatters_kwargs = custom_formatters_kwargs
 
     @property
     def iter_source(self) -> Iterator[Source]:
@@ -725,6 +736,82 @@ class Parser(ABC):
                 )
                 models.remove(model)
 
+    def __apply_discriminator_type(
+        self,
+        models: List[DataModel],
+        imports: Imports,
+    ) -> None:
+        for model in models:
+            for field in model.fields:
+                discriminator = field.extras.get('discriminator')
+                if not discriminator or not isinstance(discriminator, dict):
+                    continue
+                property_name = discriminator.get('propertyName')
+                if not property_name:  # pragma: no cover
+                    continue
+                mapping = discriminator.get('mapping', {})
+                for data_type in field.data_type.data_types:
+                    if not data_type.reference:  # pragma: no cover
+                        continue
+                    discriminator_model = data_type.reference.source
+                    if not isinstance(  # pragma: no cover
+                        discriminator_model,
+                        (pydantic_model.BaseModel, pydantic_model_v2.BaseModel),
+                    ):
+                        continue  # pragma: no cover
+                    type_name = None
+                    if mapping:
+                        for name, path in mapping.items():
+                            if (
+                                discriminator_model.path.split('#/')[-1]
+                                != path.split('#/')[-1]
+                            ):
+                                # TODO: support external reference
+                                continue
+                            type_name = name
+                    else:
+                        type_name = discriminator_model.path.split('/')[-1]
+                    if not type_name:  # pragma: no cover
+                        raise RuntimeError(
+                            f'Discriminator type is not found. {data_type.reference.path}'
+                        )
+                    has_one_literal = False
+                    for discriminator_field in discriminator_model.fields:
+                        if (
+                            discriminator_field.original_name
+                            or discriminator_field.name
+                        ) != property_name:
+                            continue
+                        literals = discriminator_field.data_type.literals
+                        if len(literals) == 1 and literals[0] == type_name:
+                            has_one_literal = True
+                            continue
+                        for (
+                            field_data_type
+                        ) in discriminator_field.data_type.all_data_types:
+                            if field_data_type.reference:  # pragma: no cover
+                                field_data_type.remove_reference()
+                        discriminator_field.data_type = self.data_type(
+                            literals=[type_name]
+                        )
+                        discriminator_field.data_type.parent = discriminator_field
+                        discriminator_field.required = True
+                        imports.append(discriminator_field.imports)
+                        has_one_literal = True
+                    if not has_one_literal:
+                        discriminator_model.fields.append(
+                            self.data_model_field_type(
+                                name=property_name,
+                                data_type=self.data_type(literals=[type_name]),
+                                required=True,
+                            )
+                        )
+                    imports.append(
+                        IMPORT_LITERAL
+                        if self.target_python_version.has_literal_type
+                        else IMPORT_LITERAL_BACKPORT
+                    )
+
     @classmethod
     def _create_set_from_list(cls, data_type: DataType) -> Optional[DataType]:
         if data_type.is_list:
@@ -841,7 +928,7 @@ class Parser(ABC):
                         and any(
                             d
                             for d in model_field.data_type.all_data_types
-                            if d.is_dict or d.is_list or d.is_union
+                            if d.is_dict or d.is_union
                         )
                     ):
                         continue
@@ -851,31 +938,33 @@ class Parser(ABC):
                     if isinstance(data_type.parent, self.data_model_field_type):
                         # for field
                         # override empty field by root-type field
-                        model_field.extras = dict(
-                            root_type_field.extras, **model_field.extras
-                        )
+                        model_field.extras = {
+                            **root_type_field.extras,
+                            **model_field.extras,
+                        }
                         model_field.process_const()
 
                         if self.field_constraints:
-                            if isinstance(
-                                root_type_field.constraints, ConstraintsBase
-                            ):  # pragma: no cover
-                                model_field.constraints = root_type_field.constraints.copy(
-                                    update={
-                                        k: v
-                                        for k, v in model_field.constraints.dict().items()
-                                        if v is not None
-                                    }
-                                    if isinstance(
-                                        model_field.constraints, ConstraintsBase
-                                    )
-                                    else {}
-                                )
-                        else:
-                            pass
-                            # skip function type-hint kwargs overriding
+                            model_field.constraints = ConstraintsBase.merge_constraints(
+                                root_type_field.constraints, model_field.constraints
+                            )
 
                         data_type.parent.data_type = copied_data_type
+
+                    elif data_type.parent.is_list:
+                        if self.field_constraints:
+                            model_field.constraints = ConstraintsBase.merge_constraints(
+                                root_type_field.constraints, model_field.constraints
+                            )
+                        if isinstance(
+                            root_type_field, pydantic_model.DataModelField
+                        ) and not model_field.extras.get('discriminator'):  # no: pragma
+                            discriminator = root_type_field.extras.get('discriminator')
+                            if discriminator:  # no: pragma
+                                model_field.extras['discriminator'] = discriminator
+                        data_type.parent.data_types.remove(data_type)
+                        data_type.parent.data_types.append(copied_data_type)
+
                     elif isinstance(data_type.parent, DataType):
                         # for data_type
                         data_type_id = id(data_type)
@@ -1000,9 +1089,10 @@ class Parser(ABC):
         model_class_name_baseclasses: Dict[DataModel, Tuple[str, Set[str]]] = {}
         for model in models:
             class_name = model.class_name
-            model_class_name_baseclasses[model] = class_name, {
-                b.type_hint for b in model.base_classes if b.reference
-            } - {class_name}
+            model_class_name_baseclasses[model] = (
+                class_name,
+                {b.type_hint for b in model.base_classes if b.reference} - {class_name},
+            )
 
         changed: bool = True
         while changed:
@@ -1072,6 +1162,8 @@ class Parser(ABC):
                 self.wrap_string_literal,
                 skip_string_normalization=not self.use_double_quotes,
                 known_third_party=self.known_third_party,
+                custom_formatters=self.custom_formatter,
+                custom_formatters_kwargs=self.custom_formatters_kwargs,
             )
         else:
             code_formatter = None
@@ -1099,9 +1191,7 @@ class Parser(ABC):
         module_to_import: Dict[Tuple[str, ...], Imports] = {}
 
         previous_module = ()  # type: Tuple[str, ...]
-        for module, models in (
-            (k, [*v]) for k, v in grouped_models
-        ):  # type: Tuple[str, ...], List[DataModel]
+        for module, models in ((k, [*v]) for k, v in grouped_models):  # type: Tuple[str, ...], List[DataModel]
             for model in models:
                 model_to_module_models[model] = module, models
             self.__delete_duplicate_models(models)
@@ -1158,6 +1248,7 @@ class Parser(ABC):
             self.__override_required_field(models)
             self.__sort_models(models, imports)
             self.__set_one_literal_on_default(models)
+            self.__apply_discriminator_type(models, imports)
 
             processed_models.append(
                 Processed(module, models, init, imports, scoped_model_resolver)
