@@ -191,8 +191,8 @@ class JsonSchemaObject(BaseModel):
     def validate_exclusive_maximum_and_exclusive_minimum(cls, values: Any) -> Any:
         if not isinstance(values, dict):
             return values
-        exclusive_maximum: Union[float, bool, None] = values.get('exclusiveMaximum')
-        exclusive_minimum: Union[float, bool, None] = values.get('exclusiveMinimum')
+        exclusive_maximum: Union[float, bool, None] = values.get('exclusiveMaximum') if isinstance(values, dict) else None
+        exclusive_minimum: Union[float, bool, None] = values.get('exclusiveMinimum') if isinstance(values, dict) else None
 
         if exclusive_maximum is True:
             values['exclusiveMaximum'] = values['maximum']
